@@ -18,14 +18,18 @@ import pandas as pd
 
 
 # 证书列配置：列名索引 -> 证书类型名称
+# 格式: 到期时间列: (证书类型, 证编号列, 发证日期列, 到期时间列)
+# 注意：Excel列号从1开始，Python从0开始，所以需要-1
 CERTIFICATE_COLUMNS = {
-    11: ('IADC/IWCF', 9, 10, 11),  # (证书类型, 证编号列, 发证日期列, 到期时间列)
-    14: ('HSE证(H2S)', 12, 13, 14),
-    17: ('井控证', 15, 16, 17),
-    20: ('司机证', 18, 19, 20),
-    23: ('局部指吊证', 21, 22, 23),
-    32: ('起重证', 30, 31, 32),
-    35: ('单位证', 33, 34, 35),
+    11: ('IADC/IWCF', 9, 10, 11),      # Excel列10-12: IADC/IWCF
+    14: ('HSE证(H2S)', 12, 13, 14),     # Excel列13-15: HSE证(H2S)
+    17: ('急救证', 15, 16, 17),         # Excel列16-18: 急救证
+    20: ('消防证', 18, 19, 20),         # Excel列19-21: 消防证
+    23: ('司索指挥证', 21, 22, 23),     # Excel列22-24: 司索指挥证
+    26: ('防恐证', 24, 25, 26),         # Excel列25-27: 防恐证
+    29: ('电工证/危化品', 27, 28, 29),  # Excel列28-30: 电工证/危化品
+    32: ('健康证', 30, 31, 32),         # Excel列31-33: 健康证
+    35: ('岗位证', 33, 34, 35),         # Excel列34-36: 岗位证
 }
 
 NAME_COLUMN = 2  # 姓名列索引
@@ -151,12 +155,19 @@ def generate_report(df, output_path):
 
 def main():
     """主函数"""
-    if len(sys.argv) < 3:
-        print("用法: python certificate_checker_wide.py <输入文件.xlsx> <输出文件.csv>")
+    if len(sys.argv) < 2:
+        print("用法: python certificate_checker_wide.py <输入文件.xlsx> [输出文件.csv]")
+        print("如果不指定输出文件，将默认保存在输入文件同目录下，命名为：人员证件预警报告.csv")
         sys.exit(1)
 
     input_file = sys.argv[1]
-    output_file = sys.argv[2]
+
+    # 如果没有指定输出文件，使用默认路径（输入文件同目录）
+    if len(sys.argv) >= 3:
+        output_file = sys.argv[2]
+    else:
+        input_path = Path(input_file)
+        output_file = str(input_path.parent / "人员证件预警报告.csv")
 
     # 检查输入文件
     if not Path(input_file).exists():
