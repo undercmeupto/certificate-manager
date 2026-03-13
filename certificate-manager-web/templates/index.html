@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>证件管理系统 - Certificate Management</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/industrial.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-title">证件管理系统</div>
+        </header>
+
+        <!-- Toolbar -->
+        <div class="toolbar">
+            <button class="btn btn-primary" onclick="showUploadModal()">
+                <span>[+]</span> 上传Excel
+            </button>
+            <button class="btn" onclick="showAddModal()">
+                <span>[+]</span> 添加记录
+            </button>
+            <button class="btn btn-danger" onclick="showDeleteByNameModal()">
+                <span>[-]</span> 删除记录
+            </button>
+            <button class="btn" onclick="exportExcel()">
+                <span>[↓]</span> 导出全部
+            </button>
+            <button class="btn" onclick="exportOriginalUpdatedExcel()">
+                <span>[↓]</span> 导出原表更新
+            </button>
+            <button class="btn btn-danger" onclick="exportWarningExcel()">
+                <span>[!]</span> 导出预警
+            </button>
+            <button class="btn btn-success" onclick="loadData()">
+                <span>[↻]</span> 刷新
+            </button>
+            <button class="btn" onclick="exitSession()">
+                <span>[×]</span> 退出
+            </button>
+        </div>
+
+        <!-- Stats Panel -->
+        <div class="stats-panel">
+            <div class="stat-card total">
+                <div class="stat-value" id="statTotal">0</div>
+                <div class="stat-label">总计 / TOTAL</div>
+            </div>
+            <div class="stat-card expired">
+                <div class="stat-value" id="statExpired">0</div>
+                <div class="stat-label">已过期 / EXPIRED</div>
+            </div>
+            <div class="stat-card urgent">
+                <div class="stat-value" id="statUrgent">0</div>
+                <div class="stat-label">紧急 / URGENT</div>
+            </div>
+            <div class="stat-card warning">
+                <div class="stat-value" id="statWarning">0</div>
+                <div class="stat-label">预警 / WARNING</div>
+            </div>
+            <div class="stat-card normal">
+                <div class="stat-value" id="statNormal">0</div>
+                <div class="stat-label">正常 / NORMAL</div>
+            </div>
+        </div>
+
+        <!-- Search Bar -->
+        <div class="search-bar">
+            <input type="text" class="search-input" id="searchInput" placeholder="搜索姓名、部门、岗位、证件名称、证件号码...">
+            <select class="search-select" id="statusFilter">
+                <option value="">全部状态</option>
+                <option value="expired">已过期</option>
+                <option value="urgent">紧急</option>
+                <option value="warning">预警</option>
+                <option value="normal">正常</option>
+            </select>
+            <button class="btn" onclick="searchRecords()">
+                <span>[?]</span> 搜索
+            </button>
+            <button class="btn" onclick="clearSearch()">
+                <span>[×]</span> 清除
+            </button>
+        </div>
+
+        <!-- Data Table -->
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" class="row-checkbox" id="selectAll" onclick="toggleSelectAll()"></th>
+                        <th>姓名 / NAME</th>
+                        <th>部门 / DEPT</th>
+                        <th>岗位 / POSITION</th>
+                        <th>证件名称 / CERTIFICATE</th>
+                        <th>证件号码 / NUMBER</th>
+                        <th>取证日期 / ISSUE</th>
+                        <th>到期日期 / EXPIRY</th>
+                        <th>剩余天数 / DAYS</th>
+                        <th>状态 / STATUS</th>
+                        <th>操作 / ACTIONS</th>
+                    </tr>
+                </thead>
+                <tbody id="dataTableBody">
+                    <!-- Data will be loaded here -->
+                </tbody>
+            </table>
+
+            <!-- Empty State -->
+            <div class="empty-state" id="emptyState">
+                <div class="empty-state-icon">[DAT]</div>
+                <div class="empty-state-text">暂无数据</div>
+                <div class="empty-state-hint">请上传Excel文件或添加新记录</div>
+            </div>
+
+            <!-- Loading -->
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div class="loading-text">正在加载数据...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Modal -->
+    <div class="modal-overlay" id="uploadModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">上传Excel文件 / UPLOAD</div>
+                <button class="modal-close" onclick="closeUploadModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+                    <div class="upload-icon">[FILE]</div>
+                    <div class="upload-text">点击或拖拽上传Excel文件</div>
+                    <div class="upload-hint">支持 .xlsx、.xls 格式，最大16MB | 上传后将清除并替换现有数据</div>
+                </div>
+                <input type="file" id="fileInput" accept=".xlsx,.xls" style="display: none;" onchange="handleFileSelect(event)">
+
+                <div id="fileInfo" class="hidden" style="margin-top: 15px;">
+                    <div class="form-label">已选择文件:</div>
+                    <div id="fileName" class="text-muted"></div>
+                </div>
+
+                <div id="sheetSelector" class="hidden" style="margin-top: 15px;">
+                    <div class="form-label">选择工作表 (Sheet):</div>
+                    <select class="form-input" id="sheetSelect">
+                        <option value="">默认 (第一个)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeUploadModal()">取消</button>
+                <button class="btn btn-primary" onclick="uploadFile()" id="uploadBtn" disabled>开始上传</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Modal -->
+    <div class="modal-overlay" id="formModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title" id="formModalTitle">添加记录 / ADD RECORD</div>
+                <button class="modal-close" onclick="closeFormModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="certificateForm">
+                    <input type="hidden" id="certId">
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">姓名 / NAME *</label>
+                            <input type="text" class="form-input required" id="certName" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">部门 / DEPT *</label>
+                            <input type="text" class="form-input required" id="certDept" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">岗位 / POSITION *</label>
+                            <input type="text" class="form-input required" id="certPosition" placeholder="如：钻工、司钻、安全员等" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">证件名称 / CERTIFICATE *</label>
+                            <input type="text" class="form-input required" id="certCertName" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">取证日期 / ISSUE DATE *</label>
+                            <input type="date" class="form-input required" id="certIssueDate" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">证件号码 / NUMBER</label>
+                            <input type="text" class="form-input" id="certNumber">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">到期日期 / EXPIRY DATE *</label>
+                            <input type="date" class="form-input required" id="certExpiry" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">手机号 / PHONE</label>
+                            <input type="tel" class="form-input" id="certPhone">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">邮箱 / EMAIL</label>
+                        <input type="email" class="form-input" id="certEmail">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeFormModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveCertificate()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal-overlay" id="deleteModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">确认删除 / CONFIRM DELETE</div>
+                <button class="modal-close" onclick="closeDeleteModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <p>确定要删除以下记录吗？</p>
+                <p class="text-muted mt-10" id="deleteMessage"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeDeleteModal()">取消</button>
+                <button class="btn btn-danger" onclick="confirmDelete()">确认删除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete by Name Modal -->
+    <div class="modal-overlay" id="deleteByNameModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">删除记录 / DELETE RECORD</div>
+                <button class="modal-close" onclick="closeDeleteByNameModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <p>请输入要删除的员工姓名，将删除该员工的所有证件记录：</p>
+                <div class="form-group">
+                    <label class="form-label">员工姓名 / NAME *</label>
+                    <input type="text" class="form-input required" id="deleteByName" placeholder="例如：张三">
+                </div>
+                <div class="mt-10" id="deletePreview"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeDeleteByNameModal()">取消</button>
+                <button class="btn btn-danger" onclick="confirmDeleteByName()">确认删除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification -->
+    <div class="notification" id="notification">
+        <div class="notification-icon" id="notificationIcon"></div>
+        <div class="notification-message" id="notificationMessage"></div>
+    </div>
+
+    <script>
+        // ============ Global Variables ============
+        let certificates = [];
+        let selectedFile = null;
+        let deleteId = null;
+        let sessionActive = false;  // 会话状态
+
+        // ============ Initialization ============
+        document.addEventListener('DOMContentLoaded', () => {
+            loadSessionStatus();  // 先检查会话状态
+            loadData();
+
+            // Drag and drop handlers
+            const uploadArea = document.getElementById('uploadArea');
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('drag-over');
+            });
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('drag-over');
+            });
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('drag-over');
+                if (e.dataTransfer.files.length) {
+                    handleFileSelect({ target: { files: e.dataTransfer.files } });
+                }
+            });
+
+            // Enter key search
+            document.getElementById('searchInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') searchRecords();
+            });
+        });
+
+        // ============ Data Loading ============
+        async function loadData() {
+            showLoading(true);
+            try {
+                const response = await fetch('/api/data');
+                const result = await response.json();
+
+                if (result.success) {
+                    certificates = result.data;
+                    updateStats(result.statistics);
+                    renderTable(certificates);
+                } else {
+                    showNotification('error', result.error || '加载数据失败');
+                }
+            } catch (err) {
+                showNotification('error', '网络错误: ' + err.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // ============ Session Status ============
+        async function loadSessionStatus() {
+            try {
+                const response = await fetch('/api/session/status');
+                const result = await response.json();
+                if (result.success) {
+                    sessionActive = result.active;
+                    updateUIBySession();
+                }
+            } catch (err) {
+                console.error('Failed to load session status:', err);
+            }
+        }
+
+        function updateUIBySession() {
+            // 根据会话状态启用/禁用按钮
+            const buttons = document.querySelectorAll('.toolbar .btn:not(.btn-primary):not(.btn-success)');
+            const addBtn = document.querySelector('.toolbar .btn:not(.btn-primary):not(.btn-danger):not(.btn-success)');
+            const deleteBtn = document.querySelector('.toolbar .btn-danger');
+            const exportBtns = document.querySelectorAll('.toolbar .btn:not(.btn-primary):not(.btn-danger):not(.btn-success)');
+            const searchBtn = document.querySelector('.search-bar .btn');
+            const clearSearchBtn = document.querySelectorAll('.search-bar .btn')[1];
+
+            // 如果会话未激活，禁用大部分操作按钮
+            if (!sessionActive) {
+                // 禁用添加记录按钮
+                const addBtn = document.querySelector('.toolbar .btn:nth-child(2)');
+                if (addBtn) addBtn.disabled = true;
+
+                // 禁用删除记录按钮
+                const deleteBtn = document.querySelector('.toolbar .btn-danger');
+                if (deleteBtn) deleteBtn.disabled = true;
+
+                // 禁用导出按钮
+                const exportBtns = document.querySelectorAll('.toolbar .btn:nth-child(4), .toolbar .btn:nth-child(5), .toolbar .btn-danger:nth-child(6)');
+                exportBtns.forEach(btn => btn.disabled = true);
+
+                // 禁用搜索按钮
+                const searchBtns = document.querySelectorAll('.search-bar .btn');
+                searchBtns.forEach(btn => btn.disabled = true);
+
+                // 显示锁定状态提示
+                showLockedState();
+            } else {
+                // 启用所有按钮
+                const allBtns = document.querySelectorAll('.toolbar .btn, .search-bar .btn');
+                allBtns.forEach(btn => btn.disabled = false);
+
+                // 隐藏锁定状态
+                hideLockedState();
+            }
+        }
+
+        function showLockedState() {
+            // 显示表格上方的锁定提示
+            const tableContainer = document.querySelector('.table-container');
+            let lockMsg = document.getElementById('lockMessage');
+            if (!lockMsg) {
+                lockMsg = document.createElement('div');
+                lockMsg.id = 'lockMessage';
+                lockMsg.className = 'lock-message';
+                lockMsg.innerHTML = '<div class="lock-icon">[LOCKED]</div><div class="lock-text">会话已退出，请上传Excel文件后继续操作</div>';
+                tableContainer.insertBefore(lockMsg, tableContainer.firstChild);
+            }
+            lockMsg.style.display = 'block';
+        }
+
+        function hideLockedState() {
+            const lockMsg = document.getElementById('lockMessage');
+            if (lockMsg) {
+                lockMsg.style.display = 'none';
+            }
+        }
+
+        // ============ Statistics Update ============
+        function updateStats(stats) {
+            document.getElementById('statTotal').textContent = stats.total || 0;
+            document.getElementById('statExpired').textContent = stats.expired || 0;
+            document.getElementById('statUrgent').textContent = stats.urgent || 0;
+            document.getElementById('statWarning').textContent = stats.warning || 0;
+            document.getElementById('statNormal').textContent = stats.normal || 0;
+        }
+
+        // ============ Table Rendering ============
+        function renderTable(data) {
+            const tbody = document.getElementById('dataTableBody');
+            const emptyState = document.getElementById('emptyState');
+
+            tbody.innerHTML = '';
+
+            if (!data || data.length === 0) {
+                emptyState.classList.remove('hidden');
+                return;
+            }
+
+            emptyState.classList.add('hidden');
+
+            data.forEach(cert => {
+                const tr = document.createElement('tr');
+                tr.dataset.id = cert.id;
+
+                const daysClass = cert.days_remaining < 0 ? 'negative' :
+                                  cert.days_remaining < 30 ? 'urgent' :
+                                  cert.days_remaining < 90 ? 'warning' : 'normal';
+
+                tr.innerHTML = `
+                    <td><input type="checkbox" class="row-checkbox" value="${cert.id}"></td>
+                    <td>${escapeHtml(cert.name)}</td>
+                    <td>${escapeHtml(cert.department)}</td>
+                    <td>${escapeHtml(cert.position || '')}</td>
+                    <td>${escapeHtml(cert.certificate_name)}</td>
+                    <td>${escapeHtml(cert.certificate_number)}</td>
+                    <td>${escapeHtml(cert.issue_date || '')}</td>
+                    <td>${escapeHtml(cert.expiry_date)}</td>
+                    <td class="days-remaining ${daysClass}">${cert.days_remaining !== null ? cert.days_remaining : '-'}</td>
+                    <td><span class="status-badge ${cert.status}">${cert.status_icon} ${cert.status_label}</span></td>
+                    <td>
+                        <button class="action-btn" onclick="editRecord('${cert.id}')">编辑</button>
+                        <button class="action-btn delete" onclick="deleteRecord('${cert.id}')">删除</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // ============ Search ============
+        async function searchRecords() {
+            const searchTerm = document.getElementById('searchInput').value;
+            const statusFilter = document.getElementById('statusFilter').value;
+
+            showLoading(true);
+            try {
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ search: searchTerm, status: statusFilter })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    renderTable(result.data);
+                    showNotification('success', `找到 ${result.count} 条记录`);
+                } else {
+                    showNotification('error', result.error || '搜索失败');
+                }
+            } catch (err) {
+                showNotification('error', '网络错误: ' + err.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function clearSearch() {
+            document.getElementById('searchInput').value = '';
+            document.getElementById('statusFilter').value = '';
+            document.getElementById('selectAll').checked = false;
+            renderTable(certificates);
+        }
+
+        // ============ Upload ============
+        function showUploadModal() {
+            document.getElementById('uploadModal').classList.add('active');
+            document.getElementById('fileInfo').classList.add('hidden');
+            document.getElementById('sheetSelector').classList.add('hidden');
+            document.getElementById('uploadBtn').disabled = true;
+            selectedFile = null;
+        }
+
+        function closeUploadModal() {
+            document.getElementById('uploadModal').classList.remove('active');
+        }
+
+        async function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const validExtensions = ['.xlsx', '.xls'];
+            const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
+            if (!validExtensions.includes(fileExtension)) {
+                showNotification('error', '请上传Excel文件（.xlsx或.xls格式）');
+                return;
+            }
+
+            const maxSize = 16 * 1024 * 1024;
+            if (file.size > maxSize) {
+                showNotification('error', '文件大小不能超过16MB');
+                return;
+            }
+
+            selectedFile = file;
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileInfo').classList.remove('hidden');
+            document.getElementById('uploadBtn').disabled = false;
+
+            // Get sheet names
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const response = await fetch('/api/sheets', { method: 'POST', body: formData });
+                const result = await response.json();
+
+                if (result.success && result.sheets.length > 1) {
+                    const sheetSelect = document.getElementById('sheetSelect');
+                    sheetSelect.innerHTML = '<option value="">默认 (第一个)</option>';
+                    result.sheets.forEach(sheet => {
+                        const option = document.createElement('option');
+                        option.value = sheet;
+                        option.textContent = sheet;
+                        sheetSelect.appendChild(option);
+                    });
+                    document.getElementById('sheetSelector').classList.remove('hidden');
+                }
+            } catch (err) {
+                console.error('Failed to get sheets:', err);
+            }
+        }
+
+        async function uploadFile() {
+            if (!selectedFile) return;
+
+            // 确认上传（会清除旧数据）
+            if (certificates.length > 0) {
+                if (!confirm(`当前有 ${certificates.length} 条记录，上传后将清除所有现有数据。\n\n确定要上传新文件吗？`)) {
+                    return;
+                }
+            }
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            const sheet = document.getElementById('sheetSelect').value;
+            if (sheet) formData.append('sheet', sheet);
+
+            showLoading(true);
+            closeUploadModal();
+
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showNotification('success', result.message || '上传成功');
+                    sessionActive = true;  // 激活会话
+                    updateUIBySession();
+                    loadData();
+                } else {
+                    showNotification('error', result.error || '上传失败');
+                }
+            } catch (err) {
+                showNotification('error', '网络错误: ' + err.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // ============ Add/Edit Modal ============
+        function showAddModal() {
+            // 检查会话状态
+            if (!sessionActive) {
+                showNotification('error', '会话已退出，请先上传Excel文件');
+                return;
+            }
+            document.getElementById('formModalTitle').textContent = '添加记录 / ADD RECORD';
+            document.getElementById('certificateForm').reset();
+            document.getElementById('certId').value = '';
+            document.getElementById('formModal').classList.add('active');
+        }
+
+        function closeFormModal() {
+            document.getElementById('formModal').classList.remove('active');
+        }
+
+        async function editRecord(id) {
+            // 检查会话状态
+            if (!sessionActive) {
+                showNotification('error', '会话已退出，请先上传Excel文件');
+                return;
+            }
+            const cert = certificates.find(c => c.id === id);
+            if (!cert) return;
+
+            document.getElementById('formModalTitle').textContent = '编辑记录 / EDIT RECORD';
+            document.getElementById('certId').value = cert.id;
+            document.getElementById('certName').value = cert.name;
+            document.getElementById('certDept').value = cert.department;
+            document.getElementById('certPosition').value = cert.position || '';
+            document.getElementById('certCertName').value = cert.certificate_name;
+            document.getElementById('certNumber').value = cert.certificate_number || '';
+            document.getElementById('certExpiry').value = cert.expiry_date;
+            document.getElementById('certIssueDate').value = cert.issue_date || '';
+            document.getElementById('certEmail').value = cert.email || '';
+            document.getElementById('certPhone').value = cert.phone || '';
+
+            document.getElementById('formModal').classList.add('active');
+        }
+
+        async function saveCertificate() {
+            const id = document.getElementById('certId').value;
+            const data = {
+                name: document.getElementById('certName').value.trim(),
+                department: document.getElementById('certDept').value.trim(),
+                position: document.getElementById('certPosition').value.trim(),
+                certificate_name: document.getElementById('certCertName').value.trim(),
+                certificate_number: document.getElementById('certNumber').value.trim(),
+                expiry_date: document.getElementById('certExpiry').value,
+                issue_date: document.getElementById('certIssueDate').value,
+                email: document.getElementById('certEmail').value.trim(),
+                phone: document.getElementById('certPhone').value.trim()
+            };
+
+            if (!data.name || !data.department || !data.position || !data.certificate_name || !data.issue_date || !data.expiry_date) {
+                showNotification('error', '请填写所有必填字段');
+                return;
+            }
+
+            showLoading(true);
+            closeFormModal();
+
+            try {
+                const url = id ? `/api/data/${id}` : '/api/data';
+                const method = id ? 'PUT' : 'POST';
+
+                const response = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showNotification('success', id ? '更新成功' : '添加成功');
+                    loadData();
+                } else {
+                    showNotification('error', result.error || '操作失败');
+                }
+            } catch (err) {
+                showNotification('error', '网络错误: ' + err.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // ============ Delete ============
+        function deleteRecord(id) {
+            // 检查会话状态
+            if (!sessionActive) {
+                showNotification('error', '会话已退出，请先上传Excel文件');
+                return;
+            }
+            const cert = certificates.find(c => c.id === id);
+            if (!cert) return;
+
+            deleteId = id;
+            document.getElementById('deleteMessage').textContent =
+                `${cert.name} - ${cert.certificate_name} (${cert.expiry_date})`;
+            document.getElementById('deleteModal').classList.add('active');
+        }
+
+        function closeDeleteModal() {
+            document.getElementById('deleteModal').classList.remove('active');
+            deleteId = null;
+        }
+
+        async function confirmDelete() {
+            if (!deleteId) return;
+
+            showLoading(true);
+            closeDeleteModal();
+
+            try {
+                const response = await fetch(`/api/data/${deleteId}`, { method: 'DELETE' });
+                const result = await response.json();
+
+                if (result.success) {
+                    showNotification('success', '删除成功');
+                    loadData();
+                } else {
+                    showNotification('error', result.error || '删除失败');
+                }
+            } catch (err) {
+                showNotification('error', '网络错误: ' + err.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // ============ Delete by Name ============
+        function showDeleteByNameModal() {
+            // 检查会话状态
+            if (!sessionActive) {
+                showNotification('error', '会话已退出，请先上传Excel文件');
+                return;
+            }
+            document.getElementById('deleteByName').value = '';
+            document.getElementById('deletePreview').innerHTML = '';
+            document.getElementById('deleteByNameModal').classList.add('active');
+            document.getElementById('deleteByName').focus();
+        }
+
+        function closeDeleteByNameModal() {
+            document.getElementById('deleteByNameModal').classList.remove('active');
+            document.getElementById('deleteByName').value = '';
+            document.getElementById('deletePreview').innerHTML = '';
+        }
+
+        // Preview records to delete when typing name
+        document.addEventListener('DOMContentLoaded', function() {
+            const deleteInput = document.getElementById('deleteByName');
+            if (deleteInput) {
+                deleteInput.addEventListener('input', function() {
+                    const name = this.value.trim();
+                    const preview = document.getElementById('deletePreview');
+                    if (name) {
+                        const matching = certificates.filter(c => c.name.includes(name));
+                        if (matching.length > 0) {
+                            preview.innerHTML = `<p class="text-warning">将删除 ${matching.length} 条记录：</p>` +
+                                matching.map(c => `<p class="text-muted">${c.name} - ${c.certificate_name} - ${c.expiry_date}</p>`).join('');
+                        } else {
+                            preview.innerHTML = `<p class="text-muted">未找到匹配的记录</p>`;
+                        }
+                    } else {
+                        preview.innerHTML = '';
+                    }
+                });
+            }
+        });
+
+        async function confirmDeleteByName() {
+            const name = document.getElementById('deleteByName').value.trim();
+            if (!name) {
+                showNotification('error', '请输入员工姓名');
+                return;
+            }
+
+            // Find all certificates for this person
+            const toDelete = certificates.filter(c => c.name.includes(name));
+
+            if (toDelete.length === 0) {
+                showNotification('error', '未找到匹配的记录');
+                return;
+            }
+
+            if (!confirm(`确定要删除 "${name}" 的 ${toDelete.length} 条证件记录吗？`)) {
+                return;
+            }
+
+            showLoading(true);
+            closeDeleteByNameModal();
+
+            let deletedCount = 0;
+            let failedCount = 0;
+
+            try {
+                // Delete each record
+                for (const cert of toDelete) {
+                    try {
+                        const response = await fetch(`/api/data/${cert.id}`, { method: 'DELETE' });
+                        const result = await response.json();
+                        if (result.success) {
+                            deletedCount++;
+                        } else {
+                            failedCount++;
+                        }
+                    } catch (err) {
+                        failedCount++;
+                    }
+                }
+
+                if (deletedCount > 0) {
+                    showNotification('success', `成功删除 ${deletedCount} 条记录${failedCount > 0 ? `，失败 ${failedCount} 条` : ''}`);
+                    loadData();
+                } else {
+                    showNotification('error', '删除失败');
+                }
+            } catch (err) {
+                showNotification('error', '网络错误: ' + err.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // ============ Export ============
+        function exportExcel() {
+            window.location.href = '/api/export';
+            showNotification('success', '正在导出全部Excel文件...');
+        }
+
+        function exportWarningExcel() {
+            window.location.href = '/api/export/warning';
+            showNotification('success', '正在导出预警Excel文件...');
+        }
+
+        function exportOriginalUpdatedExcel() {
+            window.location.href = '/api/export/original-updated';
+            showNotification('success', '正在导出原表更新文件...');
+        }
+
+        // ============ Exit ============
+        async function exitSession() {
+            if (!confirm('确定要退出吗？数据将被清除，系统将被锁定，需重新上传文件才能操作。')) return;
+
+            try {
+                await fetch('/api/exit', { method: 'POST' });
+                showNotification('success', '已退出会话，系统已锁定');
+                sessionActive = false;  // 停用会话
+                certificates = [];
+                updateStats({ total: 0, expired: 0, urgent: 0, warning: 0, normal: 0 });
+                renderTable([]);
+                updateUIBySession();  // 更新UI为锁定状态
+            } catch (err) {
+                showNotification('error', '操作失败');
+            }
+        }
+
+        // ============ Select All ============
+        function toggleSelectAll() {
+            const checked = document.getElementById('selectAll').checked;
+            document.querySelectorAll('.row-checkbox').forEach(cb => {
+                if (cb.id !== 'selectAll') cb.checked = checked;
+            });
+        }
+
+        // ============ Utility Functions ============
+        function showLoading(show) {
+            document.getElementById('loading').classList.toggle('active', show);
+        }
+
+        function showNotification(type, message) {
+            const notification = document.getElementById('notification');
+            const icon = document.getElementById('notificationIcon');
+            const msg = document.getElementById('notificationMessage');
+
+            notification.className = 'notification ' + type + ' active';
+            icon.textContent = type === 'success' ? '[OK]' : '[ERR]';
+            msg.textContent = message;
+
+            setTimeout(() => {
+                notification.classList.remove('active');
+            }, 3000);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
