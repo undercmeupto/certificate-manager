@@ -487,9 +487,12 @@ def export_original_updated():
         if not certificates:
             return jsonify({'success': False, 'error': '没有数据可导出'}), 400
 
-        # 生成文件名
+        # 生成文件名（带时间戳，避免缓存）
         original_name = metadata.get('original_filename', 'original.xlsx')
-        filename = f"updated_{original_name}"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        # 移除扩展名并添加时间戳（一次性解包）
+        name_without_ext, ext = os.path.splitext(original_name)
+        filename = f"updated_{name_without_ext}_{timestamp}{ext}"
         filepath = os.path.join(EXPORT_FOLDER, filename)
 
         # 使用原始格式更新导出

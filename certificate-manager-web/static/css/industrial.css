@@ -669,7 +669,7 @@ body {
 .text-center { text-align: center; }
 .text-right { text-align: right; }
 .text-muted { color: var(--text-light); }
-.text-warning { color: var(--warning-color); }
+.text-warning { color: var(--status-warning); }
 .mt-10 { margin-top: 10px; }
 .mb-10 { margin-bottom: 10px; }
 .hidden { display: none !important; }

@@ -245,12 +245,12 @@
     <div class="modal-overlay" id="deleteByNameModal">
         <div class="modal">
             <div class="modal-header">
-                <div class="modal-title">删除记录 / DELETE RECORD</div>
+                <div class="modal-title" id="deleteByNameModalTitle">删除记录 / DELETE RECORD</div>
                 <button class="modal-close" onclick="closeDeleteByNameModal()">×</button>
             </div>
             <div class="modal-body">
-                <p>请输入要删除的员工姓名，将删除该员工的所有证件记录：</p>
-                <div class="form-group">
+                <p id="deleteByNameInstructions">请输入要删除的员工姓名，将删除该员工的所有证件记录：</p>
+                <div class="form-group" id="deleteByNameLabel">
                     <label class="form-label">员工姓名 / NAME *</label>
                     <input type="text" class="form-input required" id="deleteByName" placeholder="例如：张三">
                 </div>
@@ -275,6 +275,17 @@
         let selectedFile = null;
         let deleteId = null;
         let sessionActive = false;  // 会话状态
+
+        // ============ Utility Functions ============
+        function isValidId(id) {
+            return id && id !== 'null' && id !== 'undefined';
+        }
+
+        function getSelectedCertificateIds() {
+            return Array.from(document.querySelectorAll('.row-checkbox:checked'))
+                .map(cb => cb.value)
+                .filter(id => isValidId(id));
+        }
 
         // ============ Initialization ============
         document.addEventListener('DOMContentLoaded', () => {
@@ -313,6 +324,13 @@
 
                 if (result.success) {
                     certificates = result.data;
+                    // Validate and fix null IDs
+                    certificates = certificates.map(cert => {
+                        if (!isValidId(cert.id)) {
+                            cert.id = 'temp_' + Math.random().toString(36).substr(2, 9);
+                        }
+                        return cert;
+                    });
                     updateStats(result.statistics);
                     renderTable(certificates);
                 } else {
@@ -424,11 +442,16 @@
 
             data.forEach(cert => {
                 const tr = document.createElement('tr');
-                tr.dataset.id = cert.id;
+                tr.dataset.id = cert.id || '';
 
                 const daysClass = cert.days_remaining < 0 ? 'negative' :
                                   cert.days_remaining < 30 ? 'urgent' :
                                   cert.days_remaining < 90 ? 'warning' : 'normal';
+
+                // Skip certificates without valid ID
+                if (!isValidId(cert.id)) {
+                    return;
+                }
 
                 tr.innerHTML = `
                     <td><input type="checkbox" class="row-checkbox" value="${cert.id}"></td>
@@ -442,11 +465,32 @@
                     <td class="days-remaining ${daysClass}">${cert.days_remaining !== null ? cert.days_remaining : '-'}</td>
                     <td><span class="status-badge ${cert.status}">${cert.status_icon} ${cert.status_label}</span></td>
                     <td>
-                        <button class="action-btn" onclick="editRecord('${cert.id}')">编辑</button>
-                        <button class="action-btn delete" onclick="deleteRecord('${cert.id}')">删除</button>
+                        <button class="action-btn" data-id="${cert.id}" data-action="edit">编辑</button>
+                        <button class="action-btn delete" data-id="${cert.id}" data-action="delete">删除</button>
                     </td>
                 `;
                 tbody.appendChild(tr);
+            });
+
+            // 添加事件监听器到操作按钮
+            tbody.querySelectorAll('.action-btn').forEach(btn => {
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const id = this.dataset.id;
+                    const action = this.dataset.action;
+
+                    if (!isValidId(id)) {
+                        showNotification('error', '无效的证件ID，请刷新页面');
+                        return;
+                    }
+
+                    if (action === 'edit') {
+                        editRecord(id);
+                    } else if (action === 'delete') {
+                        deleteRecord(id);
+                    }
+                });
             });
         }
 
@@ -607,8 +651,14 @@
                 showNotification('error', '会话已退出，请先上传Excel文件');
                 return;
             }
+            if (!isValidId(id)) {
+                showNotification('error', '无效的证件ID');
+                return;
+            }
             const cert = certificates.find(c => c.id === id);
-            if (!cert) return;
+            if (!cert) {
+                return;
+            }
 
             document.getElementById('formModalTitle').textContent = '编辑记录 / EDIT RECORD';
             document.getElementById('certId').value = cert.id;
@@ -627,6 +677,7 @@
 
         async function saveCertificate() {
             const id = document.getElementById('certId').value;
+            const validId = isValidId(id) ? id : '';
             const data = {
                 name: document.getElementById('certName').value.trim(),
                 department: document.getElementById('certDept').value.trim(),
@@ -648,8 +699,8 @@
             closeFormModal();
 
             try {
-                const url = id ? `/api/data/${id}` : '/api/data';
-                const method = id ? 'PUT' : 'POST';
+                const url = validId ? `/api/data/${validId}` : '/api/data';
+                const method = validId ? 'PUT' : 'POST';
 
                 const response = await fetch(url, {
                     method: method,
@@ -673,13 +724,21 @@
 
         // ============ Delete ============
         function deleteRecord(id) {
-            // 检查会话状态
+            if (!isValidId(id)) {
+                showNotification('error', '无效的证件ID');
+                return;
+            }
+
             if (!sessionActive) {
                 showNotification('error', '会话已退出，请先上传Excel文件');
                 return;
             }
+
             const cert = certificates.find(c => c.id === id);
-            if (!cert) return;
+            if (!cert) {
+                showNotification('error', '证件不存在，请刷新页面后重试');
+                return;
+            }
 
             deleteId = id;
             document.getElementById('deleteMessage').textContent =
@@ -693,13 +752,18 @@
         }
 
         async function confirmDelete() {
-            if (!deleteId) return;
+            if (!deleteId) {
+                return;
+            }
+
+            // Store the ID before closing modal (closeDeleteModal clears deleteId)
+            const idToDelete = deleteId;
 
             showLoading(true);
             closeDeleteModal();
 
             try {
-                const response = await fetch(`/api/data/${deleteId}`, { method: 'DELETE' });
+                const response = await fetch(`/api/data/${idToDelete}`, { method: 'DELETE' });
                 const result = await response.json();
 
                 if (result.success) {
@@ -715,23 +779,59 @@
             }
         }
 
-        // ============ Delete by Name ============
+        // ============ Delete Selected Records ============
         function showDeleteByNameModal() {
             // 检查会话状态
             if (!sessionActive) {
                 showNotification('error', '会话已退出，请先上传Excel文件');
                 return;
             }
-            document.getElementById('deleteByName').value = '';
-            document.getElementById('deletePreview').innerHTML = '';
+
+            const selectedIds = getSelectedCertificateIds();
+
+            if (selectedIds.length > 0) {
+                // 有选中的记录，显示删除确认
+                const selectedCerts = certificates.filter(c => selectedIds.includes(c.id));
+                showDeleteSelectedModal(selectedCerts);
+            } else {
+                // 没有选中记录，显示按姓名删除的弹窗
+                document.getElementById('deleteByName').value = '';
+                document.getElementById('deletePreview').innerHTML = '';
+                document.getElementById('deleteByNameModal').classList.add('active');
+                document.getElementById('deleteByName').focus();
+            }
+        }
+
+        function showDeleteSelectedModal(selectedCerts) {
+            // 创建预览内容
+            let previewHtml = `<p class="text-warning">将删除以下 ${selectedCerts.length} 条记录：</p>`;
+            previewHtml += `<div style="max-height: 200px; overflow-y: auto; margin-top: 10px;">`;
+            selectedCerts.forEach(cert => {
+                previewHtml += `<p class="text-muted" style="margin: 5px 0;">✓ ${cert.name} - ${cert.certificate_name} - ${cert.expiry_date}</p>`;
+            });
+            previewHtml += `</div>`;
+
+            // 更新模态框标题和内容
+            document.getElementById('deleteByNameModalTitle').textContent = `删除选中的 ${selectedCerts.length} 条记录`;
+            document.getElementById('deletePreview').innerHTML = previewHtml;
+            document.getElementById('deleteByName').value = ''; // 清空姓名输入框
+            document.getElementById('deleteByName').style.display = 'none'; // 隐藏姓名输入框
+            document.getElementById('deleteByNameLabel').style.display = 'none'; // 隐藏标签
+
             document.getElementById('deleteByNameModal').classList.add('active');
-            document.getElementById('deleteByName').focus();
+
+            // 保存选中的ID用于删除
+            window.selectedForDelete = selectedCerts.map(c => c.id);
         }
 
         function closeDeleteByNameModal() {
             document.getElementById('deleteByNameModal').classList.remove('active');
             document.getElementById('deleteByName').value = '';
             document.getElementById('deletePreview').innerHTML = '';
+            document.getElementById('deleteByName').style.display = '';
+            document.getElementById('deleteByNameLabel').style.display = '';
+            document.getElementById('deleteByNameModalTitle').textContent = '删除记录 / DELETE RECORD';
+            window.selectedForDelete = [];
         }
 
         // Preview records to delete when typing name
@@ -757,21 +857,32 @@
         });
 
         async function confirmDeleteByName() {
-            const name = document.getElementById('deleteByName').value.trim();
-            if (!name) {
-                showNotification('error', '请输入员工姓名');
-                return;
+            let toDelete = [];
+            let confirmMessage = '';
+
+            // 检查是否有预选的记录（通过复选框选中）
+            if (window.selectedForDelete && window.selectedForDelete.length > 0) {
+                toDelete = certificates.filter(c => window.selectedForDelete.includes(c.id));
+                confirmMessage = `确定要删除选中的 ${toDelete.length} 条证件记录吗？`;
+            } else {
+                // 按姓名删除
+                const name = document.getElementById('deleteByName').value.trim();
+                if (!name) {
+                    showNotification('error', '请输入员工姓名');
+                    return;
+                }
+
+                toDelete = certificates.filter(c => c.name.includes(name));
+
+                if (toDelete.length === 0) {
+                    showNotification('error', '未找到匹配的记录');
+                    return;
+                }
+
+                confirmMessage = `确定要删除 "${name}" 的 ${toDelete.length} 条证件记录吗？`;
             }
 
-            // Find all certificates for this person
-            const toDelete = certificates.filter(c => c.name.includes(name));
-
-            if (toDelete.length === 0) {
-                showNotification('error', '未找到匹配的记录');
-                return;
-            }
-
-            if (!confirm(`确定要删除 "${name}" 的 ${toDelete.length} 条证件记录吗？`)) {
+            if (!confirm(confirmMessage)) {
                 return;
             }
 
@@ -796,6 +907,9 @@
                         failedCount++;
                     }
                 }
+
+                // 清空选择
+                document.getElementById('selectAll').checked = false;
 
                 if (deletedCount > 0) {
                     showNotification('success', `成功删除 ${deletedCount} 条记录${failedCount > 0 ? `，失败 ${failedCount} 条` : ''}`);

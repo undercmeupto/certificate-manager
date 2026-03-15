@@ -226,8 +226,9 @@ def parse_complex_format(file_path: str, sheet_name: int = 0) -> Tuple[List[Dict
     certificates = []
     stats = {'total': 0, 'expired': 0, 'urgent': 0, 'warning': 0, 'normal': 0}
 
-    # 数据从第2行开始（索引2）
-    for idx in range(2, len(df)):
+    # 数据从第4行开始（pandas索引3，因为前3行是标题）
+    # 使用range(3, ...)确保从正确的数据行开始
+    for idx in range(3, len(df)):
         row = df.iloc[idx]
         name = str(row[2]).strip() if pd.notna(row[2]) else ''
 
@@ -240,6 +241,7 @@ def parse_complex_format(file_path: str, sheet_name: int = 0) -> Tuple[List[Dict
         for cert in CERTIFICATE_TYPES:
             cert_num = str(row[cert['num_col']]).strip() if pd.notna(row[cert['num_col']]) else ''
             exp_date = row[cert['exp_col']]
+            issue_date = row[cert['issue_col']]  # 读取发证日期
 
             if not cert_num or cert_num == 'nan':
                 continue
@@ -258,7 +260,7 @@ def parse_complex_format(file_path: str, sheet_name: int = 0) -> Tuple[List[Dict
                 'certificate_name': cert['name'],
                 'certificate_number': cert_num,
                 'expiry_date': _format_date(exp_date),
-                'issue_date': '',  # 复杂格式无取证日期列
+                'issue_date': _format_date(issue_date),  # 格式化发证日期
                 'email': '',
                 'phone': phone,
                 'days_remaining': days_remaining,
@@ -465,6 +467,7 @@ def export_updated_original(original_filepath: str, output_filepath: str, certif
     """
     导出更新后的原表格（保留原始Excel格式，使用当前数据更新）
     支持添加新员工行到原表格
+    保留原表格的条件格式
 
     Args:
         original_filepath: 原始上传的Excel文件路径
@@ -478,14 +481,13 @@ def export_updated_original(original_filepath: str, output_filepath: str, certif
     try:
         import openpyxl
         from openpyxl.styles import PatternFill
-        import shutil
 
         format_type = metadata.get('format_type', 'simple')
 
         if format_type == 'complex':
-            # 复杂格式：复制原文件并更新数据单元格
-            shutil.copy2(original_filepath, output_filepath)
-            wb = openpyxl.load_workbook(output_filepath)
+            # 复杂格式：直接加载原文件并更新数据单元格（保留所有格式）
+            # data_only=False 保留公式和格式
+            wb = openpyxl.load_workbook(original_filepath, data_only=False)
 
             # 获取正确的sheet
             sheet_name = metadata.get('sheet_name')
@@ -493,6 +495,9 @@ def export_updated_original(original_filepath: str, output_filepath: str, certif
                 ws = wb[sheet_name]
             else:
                 ws = wb.active
+
+            # 注意：使用 data_only=False 加载时，条件格式会自动保留
+            # 不需要手动备份和恢复
 
             # 证件类型列定义（pandas是0索引，openpyxl是1索引，所以需要+1）
             cert_types = [
@@ -521,7 +526,8 @@ def export_updated_original(original_filepath: str, output_filepath: str, certif
             processed_people = set()
 
             # 读取原文件结构，找到每个人员行的位置
-            row_idx = 3  # Excel数据从第3行开始
+            # 数据从第4行开始（前3行是标题行）
+            row_idx = 4  # Excel数据从第4行开始
             max_rows = 1000
 
             while row_idx <= max_rows:
@@ -529,17 +535,17 @@ def export_updated_original(original_filepath: str, output_filepath: str, certif
                 name = str(name_cell.value).strip() if name_cell.value else ''
 
                 if not name or name == 'None' or name == 'nan':
-                    # 检查是否还有更多行
+                    # 如果是空行，检查是否还有更多数据
                     has_data = False
                     for col in range(1, 36):
                         cell = ws.cell(row=row_idx, column=col)
-                        if cell.value and str(cell.value).strip():
+                        if cell.value and str(cell.value).strip() and str(cell.value).strip() != 'nan':
                             has_data = True
                             break
                     if not has_data:
-                        break
+                        break  # 没有更多数据，退出
                     row_idx += 1
-                    continue
+                    continue  # 跳过此空行，处理下一行
 
                 dept_cell = ws.cell(row=row_idx, column=2)
                 dept = str(dept_cell.value).strip() if dept_cell.value else ''
@@ -576,11 +582,17 @@ def export_updated_original(original_filepath: str, output_filepath: str, certif
                         if cert_key in cert_map:
                             cert = cert_map[cert_key]
 
-                            # 更新证件号码
+                            # 更新证件号码（保留原有格式）
                             num_cell = ws.cell(row=row_idx, column=cert_type['num_col'])
+                            original_num_style = num_cell.style if hasattr(num_cell, 'style') else None
                             num_cell.value = cert.get('certificate_number', '')
+                            if original_num_style:
+                                try:
+                                    num_cell.style = original_num_style
+                                except:
+                                    pass
 
-                            # 更新发证日期
+                            # 更新发证日期（保留原有格式）
                             issue_cell = ws.cell(row=row_idx, column=cert_type['issue_col'])
                             issue_date = cert.get('issue_date', '')
                             if issue_date:
@@ -588,22 +600,34 @@ def export_updated_original(original_filepath: str, output_filepath: str, certif
                                     from datetime import datetime
                                     if isinstance(issue_date, str):
                                         issue_date = datetime.strptime(issue_date, '%Y-%m-%d')
+                                    # 保存原有格式
+                                    original_format = issue_cell.number_format
                                     issue_cell.value = issue_date
-                                    issue_cell.number_format = 'YYYY-MM-DD'
+                                    # 只有在原格式不是日期格式时才设置
+                                    if not original_format or original_format == 'General':
+                                        issue_cell.number_format = 'YYYY-MM-DD'
+                                    else:
+                                        issue_cell.number_format = original_format
                                 except:
                                     issue_cell.value = issue_date
                             else:
                                 issue_cell.value = ''
 
-                            # 更新到期日期
+                            # 更新到期日期（保留原有格式）
                             exp_cell = ws.cell(row=row_idx, column=cert_type['exp_col'])
                             exp_date = cert.get('expiry_date', '')
                             if exp_date:
                                 try:
                                     if isinstance(exp_date, str):
                                         exp_date = datetime.strptime(exp_date, '%Y-%m-%d')
+                                    # 保存原有格式
+                                    original_format = exp_cell.number_format
                                     exp_cell.value = exp_date
-                                    exp_cell.number_format = 'YYYY-MM-DD'
+                                    # 只有在原格式不是日期格式时才设置
+                                    if not original_format or original_format == 'General':
+                                        exp_cell.number_format = 'YYYY-MM-DD'
+                                    else:
+                                        exp_cell.number_format = original_format
                                 except:
                                     exp_cell.value = exp_date
                             else:
@@ -668,35 +692,62 @@ def export_updated_original(original_filepath: str, output_filepath: str, certif
                         # 找到对应的证件类型配置
                         for ct in cert_types:
                             if ct['name'] == cert_type_name:
-                                # 填写证件号码
-                                ws.cell(row=new_row_idx, column=ct['num_col']).value = cert.get('certificate_number', '')
+                                # 填写证件号码（复制上方行的格式）
+                                num_src_cell = ws.cell(row=row_idx-1, column=ct['num_col'])
+                                num_dst_cell = ws.cell(row=new_row_idx, column=ct['num_col'])
+                                num_dst_cell.value = cert.get('certificate_number', '')
+                                if num_src_cell and hasattr(num_src_cell, 'style'):
+                                    try:
+                                        num_dst_cell.style = num_src_cell.style
+                                        num_dst_cell.number_format = num_src_cell.number_format
+                                    except:
+                                        pass
 
-                                # 填写发证日期
+                                # 填写发证日期（复制上方行的格式）
                                 issue_date = cert.get('issue_date', '')
                                 if issue_date:
                                     try:
                                         from datetime import datetime
                                         if isinstance(issue_date, str):
                                             issue_date = datetime.strptime(issue_date, '%Y-%m-%d')
-                                        ws.cell(row=new_row_idx, column=ct['issue_col']).value = issue_date
-                                        ws.cell(row=new_row_idx, column=ct['issue_col']).number_format = 'YYYY-MM-DD'
+                                        issue_src_cell = ws.cell(row=row_idx-1, column=ct['issue_col'])
+                                        issue_dst_cell = ws.cell(row=new_row_idx, column=ct['issue_col'])
+                                        issue_dst_cell.value = issue_date
+                                        if issue_src_cell and hasattr(issue_src_cell, 'number_format'):
+                                            try:
+                                                issue_dst_cell.number_format = issue_src_cell.number_format
+                                                issue_dst_cell.style = issue_src_cell.style
+                                            except:
+                                                issue_dst_cell.number_format = 'YYYY-MM-DD'
+                                        else:
+                                            issue_dst_cell.number_format = 'YYYY-MM-DD'
                                     except:
                                         ws.cell(row=new_row_idx, column=ct['issue_col']).value = issue_date
 
-                                # 填写到期日期
+                                # 填写到期日期（复制上方行的格式）
                                 exp_date = cert.get('expiry_date', '')
                                 if exp_date:
                                     try:
                                         if isinstance(exp_date, str):
                                             exp_date = datetime.strptime(exp_date, '%Y-%m-%d')
-                                        ws.cell(row=new_row_idx, column=ct['exp_col']).value = exp_date
-                                        ws.cell(row=new_row_idx, column=ct['exp_col']).number_format = 'YYYY-MM-DD'
+                                        exp_src_cell = ws.cell(row=row_idx-1, column=ct['exp_col'])
+                                        exp_dst_cell = ws.cell(row=new_row_idx, column=ct['exp_col'])
+                                        exp_dst_cell.value = exp_date
+                                        if exp_src_cell and hasattr(exp_src_cell, 'number_format'):
+                                            try:
+                                                exp_dst_cell.number_format = exp_src_cell.number_format
+                                                exp_dst_cell.style = exp_src_cell.style
+                                            except:
+                                                exp_dst_cell.number_format = 'YYYY-MM-DD'
+                                        else:
+                                            exp_dst_cell.number_format = 'YYYY-MM-DD'
                                     except:
                                         ws.cell(row=new_row_idx, column=ct['exp_col']).value = exp_date
                                 break
 
                     new_row_idx += 1
 
+            # 保存工作簿（条件格式会自动保留，因为使用了 data_only=False）
             wb.save(output_filepath)
             return True
 
