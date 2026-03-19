@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: certificate-manager
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: False
+    disk:
+      name: data
+      mountPath: /opt/render/project/data
+      sizeGB: 1
