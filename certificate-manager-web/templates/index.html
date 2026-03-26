@@ -33,6 +33,9 @@
             <button class="btn btn-danger" onclick="exportWarningExcel()">
                 <span>[!]</span> 导出预警
             </button>
+            <button class="btn btn-warning" onclick="showExportByDaysModal()">
+                <span>[↓]</span> 按天数导出
+            </button>
             <button class="btn btn-success" onclick="loadData()">
                 <span>[↻]</span> 刷新
             </button>
@@ -259,6 +262,31 @@
             <div class="modal-footer">
                 <button class="btn" onclick="closeDeleteByNameModal()">取消</button>
                 <button class="btn btn-danger" onclick="confirmDeleteByName()">确认删除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export by Days Modal -->
+    <div class="modal-overlay" id="exportByDaysModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">按天数导出 / EXPORT BY DAYS</div>
+                <button class="modal-close" onclick="closeExportByDaysModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted">导出指定天数内到期的所有证件（包括已过期）</p>
+                <div class="form-group">
+                    <label class="form-label">天数 / DAYS *</label>
+                    <input type="number" class="form-input required" id="exportDays"
+                           placeholder="例如：90、180、365" min="1" max="3650">
+                    <div class="text-muted" style="margin-top: 5px; font-size: 12px;">
+                        常用值：90天（3个月）、180天（半年）、365天（1年）
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeExportByDaysModal()">取消</button>
+                <button class="btn btn-warning" onclick="exportByDays()">导出</button>
             </div>
         </div>
     </div>
@@ -854,6 +882,16 @@
                     }
                 });
             }
+
+            // Export by Days modal - Enter key to submit
+            const exportDaysInput = document.getElementById('exportDays');
+            if (exportDaysInput) {
+                exportDaysInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        exportByDays();
+                    }
+                });
+            }
         });
 
         async function confirmDeleteByName() {
@@ -938,6 +976,44 @@
         function exportOriginalUpdatedExcel() {
             window.location.href = '/api/export/original-updated';
             showNotification('success', '正在导出原表更新文件...');
+        }
+
+        // ============ Export by Days ============
+        function showExportByDaysModal() {
+            if (!sessionActive) {
+                showNotification('error', '会话已退出，请先上传Excel文件');
+                return;
+            }
+
+            document.getElementById('exportDays').value = '';
+            document.getElementById('exportByDaysModal').classList.add('active');
+
+            setTimeout(() => {
+                document.getElementById('exportDays').focus();
+            }, 100);
+        }
+
+        function closeExportByDaysModal() {
+            document.getElementById('exportByDaysModal').classList.remove('active');
+            document.getElementById('exportDays').value = '';
+        }
+
+        function exportByDays() {
+            const days = parseInt(document.getElementById('exportDays').value);
+
+            if (!days || days <= 0) {
+                showNotification('error', '请输入有效的天数（大于0的整数）');
+                return;
+            }
+
+            if (days > 3650) {
+                showNotification('error', '天数不能超过3650天（10年）');
+                return;
+            }
+
+            closeExportByDaysModal();
+            window.location.href = `/api/export/by-days?days=${days}`;
+            showNotification('success', `正在导出 ${days} 天内到期的证件...`);
         }
 
         // ============ Exit ============

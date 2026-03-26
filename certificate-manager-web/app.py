@@ -463,6 +463,56 @@ def export_warning_data():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/export/by-days', methods=['GET'])
+def export_by_days():
+    """导出指定天数内到期的证件"""
+    try:
+        # 获取并验证天数参数
+        days_str = request.args.get('days')
+        if not days_str:
+            return jsonify({'success': False, 'error': '缺少天数参数'}), 400
+
+        try:
+            days = int(days_str)
+            if days <= 0:
+                return jsonify({'success': False, 'error': '天数必须大于0'}), 400
+        except ValueError:
+            return jsonify({'success': False, 'error': '天数必须是有效的整数'}), 400
+
+        # 获取所有证件数据
+        certificates = get_all_certificates()
+
+        if not certificates:
+            return jsonify({'success': False, 'error': '没有数据可导出'}), 400
+
+        # 过滤出指定天数内到期的证件（包括已过期）
+        filtered_certificates = [
+            c for c in certificates
+            if c.get('days_remaining') is not None and c.get('days_remaining') <= days
+        ]
+
+        if not filtered_certificates:
+            return jsonify({
+                'success': False,
+                'error': f'没有在 {days} 天内到期的证件'
+            }), 400
+
+        # 按剩余天数排序（升序，最紧急的在前）
+        filtered_certificates.sort(key=lambda x: x.get('days_remaining', 999))
+
+        # 生成文件名
+        filename = f"certificates_{days}days_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        filepath = os.path.join(EXPORT_FOLDER, filename)
+
+        # 导出（复用现有函数）
+        if export_to_excel(filtered_certificates, filepath):
+            return send_file(filepath, as_attachment=True, download_name=filename)
+
+        return jsonify({'success': False, 'error': '导出失败'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/export/original-updated', methods=['GET'])
 def export_original_updated():
     """导出更新后的原表格（保留原始Excel格式，使用当前数据更新）"""
