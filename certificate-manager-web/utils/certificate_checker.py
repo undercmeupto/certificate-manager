@@ -6,6 +6,7 @@
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, Dict, List
 import pandas as pd
+import warnings
 
 # Import STATUS_MAP from config to avoid duplication
 try:
@@ -13,11 +14,11 @@ try:
 except ImportError:
     # Fallback values if config is not available
     STATUS_MAP = {
-        'expired': {'label': '已过期', 'icon': 'X', 'color': '#C0392B'},
-        'urgent': {'label': '紧急', 'icon': '!', 'color': '#E74C3C'},
+        'expired': {'label': '已过期', 'icon': 'X', 'color': "#DD2511"},
+        'urgent': {'label': '紧急', 'icon': '!', 'color': "#B34033"},
         'warning': {'label': '预警', 'icon': '?', 'color': '#F39C12'},
         'normal': {'label': '正常', 'icon': 'OK', 'color': '#27AE60'},
-        'unknown': {'label': '日期无效', 'icon': '?', 'color': '#95A5A6'}
+        'unknown': {'label': '日期无效', 'icon': '?', 'color': "#889697"}
     }
     URGENT_DAYS = 30
     WARNING_DAYS = 90
@@ -321,14 +322,24 @@ def parse_excel_file(file_path: str, sheet_name: str = None) -> Tuple[List[Dict]
 
 
 # ============ JSON Persistence ============
+# 注意：以下函数已弃用，请使用 database 模块代替
+# Deprecated: Use database module instead
 
 import json
 import os
+import warnings
 from typing import List
 
 
 def save_to_json(data: List[Dict], filepath: str, metadata: Dict = None) -> bool:
-    """保存证件数据到JSON文件"""
+    """
+    保存证件数据到JSON文件
+    已弃用：请使用 database.save_certificates() 代替
+
+    DEPRECATED: Use database.save_certificates() instead
+    """
+    warnings.warn("save_to_json is deprecated. Use database.save_certificates() instead.",
+                  DeprecationWarning, stacklevel=2)
     try:
         dir_path = os.path.dirname(filepath)
         if dir_path:  # 只在有目录路径时才创建
@@ -345,7 +356,14 @@ def save_to_json(data: List[Dict], filepath: str, metadata: Dict = None) -> bool
 
 
 def load_from_json(filepath: str) -> List[Dict]:
-    """从JSON文件加载证件数据"""
+    """
+    从JSON文件加载证件数据
+    已弃用：请使用 database.get_all_certificates() 代替
+
+    DEPRECATED: Use database.get_all_certificates() instead
+    """
+    warnings.warn("load_from_json is deprecated. Use database.get_all_certificates() instead.",
+                  DeprecationWarning, stacklevel=2)
     if not os.path.exists(filepath):
         return []
     try:
@@ -362,11 +380,19 @@ def load_from_json(filepath: str) -> List[Dict]:
 
 # ============ Excel Export ============
 
-def export_to_excel(data: List[Dict], filepath: str) -> bool:
-    """导出证件数据到Excel文件"""
+def export_to_excel(data: List[Dict], filepath: str, export_type: str = 'all', days: int = None) -> bool:
+    """导出证件数据到Excel文件
+
+    Args:
+        data: 证件数据列表
+        filepath: 输出文件路径
+        export_type: 导出类型 ('all', 'warning', 'by_days')
+        days: 天数（仅用于by_days类型）
+    """
     try:
         import openpyxl
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from datetime import datetime
 
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -374,9 +400,10 @@ def export_to_excel(data: List[Dict], filepath: str) -> bool:
 
         # 定义表头（使用发证日期作为列名）
         headers = ['姓名', '部门', '岗位', '证件名称', '证件号码', '发证日期', '到期日期', '剩余天数', '状态', '邮箱', '手机号']
+        num_cols = len(headers)
 
         # 表头样式
-        header_font = Font(bold=True, color='FFFFFF')
+        header_font = Font(bold=True, color='FFFFFF', size=11)
         header_fill = PatternFill(start_color='2C3E50', end_color='2C3E50', fill_type='solid')
         header_alignment = Alignment(horizontal='center', vertical='center')
         border_style = Border(
@@ -386,17 +413,36 @@ def export_to_excel(data: List[Dict], filepath: str) -> bool:
             bottom=Side(style='thin')
         )
 
-        # 写入表头
+        # 根据导出类型生成标题
+        if export_type == 'by_days' and days is not None:
+            title = f"{days}天到期人员证件清单"
+        elif export_type == 'warning':
+            title = "预警人员证件清单"
+        else:
+            title = "全部人员证件清单"
+
+        # 查询日期
+        query_date = datetime.now().strftime('%Y/%m/%d')
+
+        # 写入标题行（第1行）
+        title_cell = ws.cell(row=1, column=1)
+        title_cell.value = f"{title}  查询日期：{query_date}"
+        title_cell.font = Font(bold=True, size=14, color='2C3E50')
+        title_cell.alignment = Alignment(horizontal='center', vertical='center')
+        # 合并标题行
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=num_cols)
+
+        # 写入表头（第2行）
         for col, header in enumerate(headers, start=1):
-            cell = ws.cell(row=1, column=col)
+            cell = ws.cell(row=2, column=col)
             cell.value = header
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = header_alignment
             cell.border = border_style
 
-        # 写入数据
-        for row_idx, cert in enumerate(data, start=2):
+        # 写入数据（从第3行开始）
+        for row_idx, cert in enumerate(data, start=3):
             ws.cell(row=row_idx, column=1, value=cert.get('name', ''))
             ws.cell(row=row_idx, column=2, value=cert.get('department', ''))
             ws.cell(row=row_idx, column=3, value=cert.get('position', ''))
@@ -434,32 +480,55 @@ def export_to_excel(data: List[Dict], filepath: str) -> bool:
                 fill = PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
                 font_color = '000000'
 
-            for col in range(1, len(headers) + 1):
+            for col in range(1, num_cols + 1):
                 cell = ws.cell(row=row_idx, column=col)
                 cell.border = border_style
                 cell.fill = fill
                 cell.font = Font(color=font_color, bold=bold)
 
+        # 添加说明行（在数据最后一行之后）
+        footer_row = len(data) + 3  # 标题行(1) + 表头行(2) + 数据行数
+        footer_cell = ws.cell(row=footer_row, column=1)
+        footer_cell.value = "说明：红色背景表示已过期或紧急（<30天），黄色背景表示预警（30-90天），白色背景表示正常（>90天）"
+        footer_cell.font = Font(size=10, color='555555')
+        footer_cell.alignment = Alignment(horizontal='left', vertical='center', wrap_text=False)
+        footer_cell.fill = PatternFill(start_color='F5F5F5', end_color='F5F5F5', fill_type='solid')
+        # 合并说明行
+        ws.merge_cells(start_row=footer_row, start_column=1, end_row=footer_row, end_column=num_cols)
+
+        # 为说明行添加边框
+        for col in range(1, num_cols + 1):
+            cell = ws.cell(row=footer_row, column=col)
+            cell.border = border_style
+
         # 自动调整列宽
-        for col in ws.columns:
+        for col_idx, col in enumerate(ws.columns, start=1):
             max_length = 0
-            column = col[0].column_letter
+            # 使用列索引获取列字母，避免 MergedCell 的问题
+            column_letter = openpyxl.utils.get_column_letter(col_idx)
             for cell in col:
+                # 跳过合并单元格
+                if isinstance(cell, openpyxl.cell.cell.MergedCell):
+                    continue
                 try:
-                    if len(str(cell.value)) > max_length:
+                    if cell.value and len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
                 except:
                     pass
             adjusted_width = min(max_length + 2, 50)
-            ws.column_dimensions[column].width = adjusted_width
+            ws.column_dimensions[column_letter].width = adjusted_width
 
         # 确保目录存在
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        dir_path = os.path.dirname(filepath)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
 
         wb.save(filepath)
         return True
     except Exception as e:
+        import traceback
         print(f"Error exporting to Excel: {e}")
+        traceback.print_exc()
         return False
 
 
@@ -764,10 +833,13 @@ def export_updated_original(original_filepath: str, output_filepath: str, certif
 
 
 # ============ Search ============
+# 注意：以下函数已弃用，请使用 database 模块代替
+# Deprecated: Use database module instead
 
 def search_certificates(certificates: List[Dict], search_term: str = '', status_filter: str = '') -> List[Dict]:
     """
     搜索和过滤证件数据
+    已弃用：请使用 database.search_certificates() 代替
 
     Args:
         certificates: 证件列表
@@ -776,7 +848,11 @@ def search_certificates(certificates: List[Dict], search_term: str = '', status_
 
     Returns:
         过滤后的证件列表
+
+    DEPRECATED: Use database.search_certificates() instead
     """
+    warnings.warn("search_certificates is deprecated. Use database.search_certificates() instead.",
+                  DeprecationWarning, stacklevel=2)
     results = certificates
 
     if search_term:

@@ -11,7 +11,7 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 from config import (
-    DATA_FILE, UPLOAD_FOLDER, EXPORT_FOLDER,
+    DATABASE_FILE, DATA_FILE, UPLOAD_FOLDER, EXPORT_FOLDER,
     ALLOWED_EXTENSIONS, MAX_CONTENT_LENGTH,
     SECRET_KEY, DEBUG, HOST, PORT, STATUS_MAP,
     SESSION_STATE_FILE
@@ -19,13 +19,27 @@ from config import (
 from utils.certificate_checker import (
     parse_excel_file,
     get_sheet_names,
-    save_to_json,
-    load_from_json,
     export_to_excel,
-    search_certificates,
     calculate_days_remaining,
     get_status_indicator,
-    detect_excel_format
+    detect_excel_format,
+    export_updated_original
+)
+from database import (
+    init_db,
+    get_session,
+    session_scope,
+    get_all_certificates as db_get_all_certificates,
+    get_certificate_by_id as db_get_certificate_by_id,
+    add_certificate as db_add_certificate,
+    update_certificate as db_update_certificate,
+    delete_certificate as db_delete_certificate,
+    save_certificates as db_save_certificates,
+    get_session_state as db_get_session_state,
+    set_session_active as db_set_session_active,
+    get_statistics as db_get_statistics,
+    search_certificates as db_search_certificates,
+    get_certificates_by_days as db_get_certificates_by_days,
 )
 
 # ============ Flask App Setup ============
@@ -42,47 +56,23 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(EXPORT_FOLDER, exist_ok=True)
 os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
 
+# Initialize database on startup
+init_db()
+
 # ============ Helper Functions ============
 
 
 # ============ Session State Management ============
 
-SESSION_ACTIVE = False  # 全局会话状态
-
-
 def get_session_state():
-    """获取会话状态"""
-    global SESSION_ACTIVE
-    return SESSION_ACTIVE
+    """获取会话状态（从数据库）"""
+    state = db_get_session_state()
+    return state.get('active', False)
 
 
 def set_session_state(active):
-    """设置会话状态"""
-    global SESSION_ACTIVE
-    SESSION_ACTIVE = active
-    # 保存到文件
-    try:
-        os.makedirs(os.path.dirname(SESSION_STATE_FILE), exist_ok=True)
-        with open(SESSION_STATE_FILE, 'w', encoding='utf-8') as f:
-            json.dump({'active': active, 'timestamp': datetime.now().isoformat()}, f)
-    except:
-        pass
-
-
-def load_session_state():
-    """启动时加载会话状态"""
-    global SESSION_ACTIVE
-    try:
-        if os.path.exists(SESSION_STATE_FILE):
-            with open(SESSION_STATE_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                SESSION_ACTIVE = data.get('active', False)
-    except:
-        SESSION_ACTIVE = False
-
-
-# 启动时加载会话状态
-load_session_state()
+    """设置会话状态（保存到数据库）"""
+    db_set_session_active(active)
 
 
 def allowed_file(filename):
@@ -91,43 +81,23 @@ def allowed_file(filename):
 
 
 def get_all_certificates():
-    """获取所有证件数据"""
-    return load_from_json(DATA_FILE)
+    """获取所有证件数据（从数据库）"""
+    return db_get_all_certificates()
 
 
 def get_metadata():
-    """获取上传元数据"""
-    try:
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            import json
-            data = json.load(f)
-            if isinstance(data, dict) and 'metadata' in data:
-                return data['metadata']
-        return None
-    except:
+    """获取上传元数据（从数据库）"""
+    from models import UploadMetadata
+    with session_scope() as session:
+        meta = session.query(UploadMetadata).first()
+        if meta:
+            return meta.to_dict()
         return None
 
 
 def save_certificates(certificates, metadata=None):
-    """保存证件数据，自动保留现有元数据"""
-    if metadata is None:
-        # 如果没有提供新元数据，尝试保留现有元数据
-        existing_data = load_json_with_metadata(DATA_FILE)
-        if isinstance(existing_data, dict) and 'metadata' in existing_data:
-            metadata = existing_data['metadata']
-    return save_to_json(certificates, DATA_FILE, metadata=metadata)
-
-
-def load_json_with_metadata(filepath: str):
-    """加载JSON文件（包含元数据）"""
-    if not os.path.exists(filepath):
-        return {}
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            import json
-            return json.load(f)
-    except:
-        return {}
+    """保存证件数据到数据库"""
+    return db_save_certificates(certificates, metadata=metadata)
 
 
 def update_certificate_status(cert):
@@ -147,20 +117,30 @@ def update_certificate_status(cert):
     return cert
 
 
-def get_statistics(certificates):
-    """获取统计数据"""
-    stats = {
-        'total': len(certificates),
-        'expired': 0,
-        'urgent': 0,
-        'warning': 0,
-        'normal': 0
-    }
-    for cert in certificates:
-        status = cert.get('status', 'normal')
-        if status in stats:
-            stats[status] += 1
-    return stats
+def get_statistics(certificates=None):
+    """获取统计数据（从数据库或提供的列表）"""
+    if certificates is None:
+        # 从数据库获取统计数据
+        stats = db_get_statistics()
+        # Add 'unknown' count for compatibility
+        if 'unknown' not in stats:
+            stats['unknown'] = 0
+        return stats
+    else:
+        # 从提供的列表计算统计数据
+        stats = {
+            'total': len(certificates),
+            'expired': 0,
+            'urgent': 0,
+            'warning': 0,
+            'normal': 0,
+            'unknown': 0
+        }
+        for cert in certificates:
+            status = cert.get('status', 'normal')
+            if status in stats:
+                stats[status] += 1
+        return stats
 
 
 # ============ Routes ============
@@ -176,7 +156,7 @@ def get_data():
     """获取所有证件数据"""
     try:
         certificates = get_all_certificates()
-        stats = get_statistics(certificates)
+        stats = get_statistics()  # 从数据库获取统计数据
         return jsonify({
             'success': True,
             'data': certificates,
@@ -190,8 +170,7 @@ def get_data():
 def get_certificate(cert_id):
     """获取单个证件"""
     try:
-        certificates = get_all_certificates()
-        cert = next((c for c in certificates if c.get('id') == cert_id), None)
+        cert = db_get_certificate_by_id(cert_id)
         if cert:
             return jsonify({'success': True, 'data': cert})
         return jsonify({'success': False, 'error': '证件不存在'}), 404
@@ -232,10 +211,9 @@ def add_certificate():
         # 计算状态
         cert = update_certificate_status(cert)
 
-        # 保存
-        certificates = get_all_certificates()
-        certificates.append(cert)
-        save_certificates(certificates)
+        # 保存到数据库
+        cert_id = db_add_certificate(cert)
+        cert['id'] = cert_id
 
         return jsonify({'success': True, 'data': cert})
     except Exception as e:
@@ -243,22 +221,20 @@ def add_certificate():
 
 
 @app.route('/api/data/<cert_id>', methods=['PUT'])
-def update_certificate(cert_id):
+def update_certificate_endpoint(cert_id):
     """更新证件"""
     # 检查会话状态
     if not get_session_state():
         return jsonify({'success': False, 'error': '会话已退出，请先上传Excel文件'}), 403
     try:
         data = request.get_json()
-        certificates = get_all_certificates()
 
-        # 查找证件
-        cert_index = next((i for i, c in enumerate(certificates) if c.get('id') == cert_id), None)
-        if cert_index is None:
+        # 验证证件是否存在
+        cert = db_get_certificate_by_id(cert_id)
+        if not cert:
             return jsonify({'success': False, 'error': '证件不存在'}), 404
 
         # 更新字段
-        cert = certificates[cert_index]
         for field in ['name', 'department', 'position', 'certificate_name', 'certificate_number',
                       'expiry_date', 'issue_date', 'email', 'phone']:
             if field in data:
@@ -268,10 +244,9 @@ def update_certificate(cert_id):
 
         # 重新计算状态
         cert = update_certificate_status(cert)
-        certificates[cert_index] = cert
 
-        # 保存
-        save_certificates(certificates)
+        # 保存到数据库
+        db_update_certificate(cert_id, cert)
 
         return jsonify({'success': True, 'data': cert})
     except Exception as e:
@@ -279,22 +254,21 @@ def update_certificate(cert_id):
 
 
 @app.route('/api/data/<cert_id>', methods=['DELETE'])
-def delete_certificate(cert_id):
+def delete_certificate_endpoint(cert_id):
     """删除证件"""
     # 检查会话状态
     if not get_session_state():
         return jsonify({'success': False, 'error': '会话已退出，请先上传Excel文件'}), 403
     try:
-        certificates = get_all_certificates()
-        cert_index = next((i for i, c in enumerate(certificates) if c.get('id') == cert_id), None)
-
-        if cert_index is None:
+        # 先获取要删除的证件
+        cert = db_get_certificate_by_id(cert_id)
+        if not cert:
             return jsonify({'success': False, 'error': '证件不存在'}), 404
 
-        deleted_cert = certificates.pop(cert_index)
-        save_certificates(certificates)
+        # 从数据库删除
+        db_delete_certificate(cert_id)
 
-        return jsonify({'success': True, 'data': deleted_cert})
+        return jsonify({'success': True, 'data': cert})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -397,8 +371,8 @@ def search_data():
         search_term = data.get('search', '')
         status_filter = data.get('status', '')
 
-        certificates = get_all_certificates()
-        results = search_certificates(certificates, search_term, status_filter)
+        # 使用数据库搜索
+        results = db_search_certificates(search_term, status_filter)
 
         return jsonify({
             'success': True,
@@ -423,11 +397,16 @@ def export_data():
         filepath = os.path.join(EXPORT_FOLDER, filename)
 
         # 导出
-        if export_to_excel(certificates, filepath):
+        print(f"DEBUG: Calling export_to_excel with filepath={filepath}, export_type=all")
+        result = export_to_excel(certificates, filepath, export_type='all')
+        print(f"DEBUG: Export result={result}")
+        if result:
             return send_file(filepath, as_attachment=True, download_name=filename)
 
         return jsonify({'success': False, 'error': '导出失败'}), 500
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -455,7 +434,7 @@ def export_warning_data():
         filepath = os.path.join(EXPORT_FOLDER, filename)
 
         # 导出
-        if export_to_excel(warning_certificates, filepath):
+        if export_to_excel(warning_certificates, filepath, export_type='warning'):
             return send_file(filepath, as_attachment=True, download_name=filename)
 
         return jsonify({'success': False, 'error': '导出失败'}), 500
@@ -479,17 +458,8 @@ def export_by_days():
         except ValueError:
             return jsonify({'success': False, 'error': '天数必须是有效的整数'}), 400
 
-        # 获取所有证件数据
-        certificates = get_all_certificates()
-
-        if not certificates:
-            return jsonify({'success': False, 'error': '没有数据可导出'}), 400
-
-        # 过滤出指定天数内到期的证件（包括已过期）
-        filtered_certificates = [
-            c for c in certificates
-            if c.get('days_remaining') is not None and c.get('days_remaining') <= days
-        ]
+        # 使用数据库查询获取指定天数内到期的证件
+        filtered_certificates = db_get_certificates_by_days(days)
 
         if not filtered_certificates:
             return jsonify({
@@ -505,7 +475,7 @@ def export_by_days():
         filepath = os.path.join(EXPORT_FOLDER, filename)
 
         # 导出（复用现有函数）
-        if export_to_excel(filtered_certificates, filepath):
+        if export_to_excel(filtered_certificates, filepath, export_type='by_days', days=days):
             return send_file(filepath, as_attachment=True, download_name=filename)
 
         return jsonify({'success': False, 'error': '导出失败'}), 500
@@ -546,7 +516,6 @@ def export_original_updated():
         filepath = os.path.join(EXPORT_FOLDER, filename)
 
         # 使用原始格式更新导出
-        from utils.certificate_checker import export_updated_original
         if export_updated_original(original_filepath, filepath, certificates, metadata):
             return send_file(filepath, as_attachment=True, download_name=filename)
 
@@ -577,8 +546,7 @@ def exit_session():
 def get_stats():
     """获取统计数据"""
     try:
-        certificates = get_all_certificates()
-        stats = get_statistics(certificates)
+        stats = get_statistics()  # 从数据库获取统计数据
         return jsonify({'success': True, 'data': stats})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -587,10 +555,12 @@ def get_stats():
 @app.route('/api/session/status', methods=['GET'])
 def session_status():
     """获取会话状态"""
+    from database import get_statistics as db_get_stats
+    stats = db_get_stats()
     return jsonify({
         'success': True,
         'active': get_session_state(),
-        'has_data': len(get_all_certificates()) > 0
+        'has_data': stats.get('total', 0) > 0
     })
 
 
@@ -608,13 +578,26 @@ def internal_server_error(error):
 
 # ============ Main ============
 
+def open_browser():
+    """自动打开浏览器（仅在打包后的exe中执行）"""
+    import sys
+    import webbrowser
+    from threading import Timer
+
+    # 只在打包模式下自动打开浏览器
+    if getattr(sys, 'frozen', False):
+        Timer(1.5, lambda: webbrowser.open(f'http://localhost:{PORT}')).start()
+
 if __name__ == '__main__':
+    # 自动打开浏览器（exe模式）
+    open_browser()
+
     print(f"""
     ╔═══════════════════════════════════════════════════════════╗
     ║           证件管理系统 - Certificate Management          ║
     ╠═══════════════════════════════════════════════════════════╣
     ║  启动地址: http://localhost:{PORT}                          ║
-    ║  数据文件: {DATA_FILE}     ║
+    ║  数据库: {DATABASE_FILE}     ║
     ╚═══════════════════════════════════════════════════════════╝
     """)
     app.run(host=HOST, port=PORT, debug=DEBUG)

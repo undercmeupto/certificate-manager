@@ -2,12 +2,42 @@
 证件管理系统配置
 """
 import os
+import sys
 
 # ============ 路径配置 ============
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(BASE_DIR, 'data', 'certificates.json')
-UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
-EXPORT_FOLDER = os.path.join(BASE_DIR, 'exports')
+def get_base_dir():
+    """获取应用基础目录，支持PyInstaller打包"""
+    if getattr(sys, 'frozen', False):
+        # 如果是PyInstaller打包的exe
+        return sys._MEIPASS
+    else:
+        # 开发环境
+        return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = get_base_dir()
+
+def get_user_data_dir():
+    """获取用户数据目录，用于存放可写文件"""
+    if getattr(sys, 'frozen', False):
+        # 打包后使用用户目录
+        home = os.path.expanduser('~')
+        app_data = os.path.join(home, 'CertificateManager')
+        os.makedirs(app_data, exist_ok=True)
+        return app_data
+    else:
+        # 开发环境使用项目目录
+        return BASE_DIR
+
+USER_DATA_DIR = get_user_data_dir()
+
+# ============ 数据库配置 ============
+DATABASE_FILE = os.path.join(USER_DATA_DIR, 'certificates.db')
+
+# ============ 文件路径配置（保留用于迁移参考）============
+DATA_FILE = os.path.join(USER_DATA_DIR, 'certificates.json')  # Legacy JSON file
+UPLOAD_FOLDER = os.path.join(USER_DATA_DIR, 'uploads')
+EXPORT_FOLDER = os.path.join(USER_DATA_DIR, 'exports')
+SESSION_STATE_FILE = os.path.join(USER_DATA_DIR, 'session_state.json')  # Legacy JSON file
 
 # ============ 阈值配置 ============
 URGENT_DAYS = 30      # 紧急: < 30天
@@ -31,9 +61,6 @@ STATUS_MAP = {
     'normal': {'label': '正常', 'icon': 'OK', 'color': '#27AE60'},
     'unknown': {'label': '日期无效', 'icon': '?', 'color': '#95A5A6'}
 }
-
-# ============ 会话状态配置 ============
-SESSION_STATE_FILE = os.path.join(BASE_DIR, 'data', 'session_state.json')
 
 # ============ 证件类型列定义（用于复杂格式Excel）============
 CERTIFICATE_TYPES = [
