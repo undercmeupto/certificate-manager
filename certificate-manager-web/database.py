@@ -5,7 +5,8 @@ Database Connection and Session Management
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 from contextlib import contextmanager
-from models import Base, Certificate, UploadMetadata, SessionState
+from datetime import datetime
+from models import Base, Certificate, UploadMetadata, SessionState, parse_date
 import config
 
 
@@ -173,13 +174,13 @@ def _update_cert_fields(cert, data):
     # Handle date fields separately
     if 'issue_date' in data and data['issue_date']:
         if isinstance(data['issue_date'], str):
-            cert.issue_date = datetime.fromisoformat(data['issue_date'])
+            cert.issue_date = parse_date(data['issue_date'])
         else:
             cert.issue_date = data['issue_date']
 
     if 'expiry_date' in data and data['expiry_date']:
         if isinstance(data['expiry_date'], str):
-            cert.expiry_date = datetime.fromisoformat(data['expiry_date'])
+            cert.expiry_date = parse_date(data['expiry_date'])
         else:
             cert.expiry_date = data['expiry_date']
 
@@ -357,7 +358,3 @@ def _by_days(session, days):
         Certificate.days_remaining >= 0
     ).all()
     return [cert.to_dict() for cert in certs]
-
-
-# Import for datetime
-from datetime import datetime

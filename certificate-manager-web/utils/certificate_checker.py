@@ -16,7 +16,7 @@ except ImportError:
     STATUS_MAP = {
         'expired': {'label': '已过期', 'icon': 'X', 'color': "#DD2511"},
         'urgent': {'label': '紧急', 'icon': '!', 'color': "#B34033"},
-        'warning': {'label': '预警', 'icon': '?', 'color': '#F39C12'},
+        'warning': {'label': '预警', 'icon': '?', 'color': "#DAB821E6"},
         'normal': {'label': '正常', 'icon': 'OK', 'color': '#27AE60'},
         'unknown': {'label': '日期无效', 'icon': '?', 'color': "#889697"}
     }

@@ -10,6 +10,59 @@ from sqlalchemy.sql import func
 Base = declarative_base()
 
 
+def parse_date(date_str):
+    """
+    Parse date string in various formats
+
+    Supports:
+    - ISO format: 2025-02-25
+    - Slash format: 2025/2/25 or 2025/02/25
+    - Chinese format: 2025年02月25日
+
+    Args:
+        date_str: Date string to parse
+
+    Returns:
+        datetime object or None
+    """
+    if not date_str:
+        return None
+
+    if isinstance(date_str, datetime):
+        return date_str
+
+    date_str = str(date_str).strip()
+
+    # Try ISO format first (YYYY-MM-DD)
+    try:
+        return datetime.fromisoformat(date_str)
+    except ValueError:
+        pass
+
+    # Try slash format (YYYY/M/D or YYYY/MM/DD)
+    if '/' in date_str:
+        try:
+            parts = date_str.split('/')
+            year = int(parts[0])
+            month = int(parts[1])
+            day = int(parts[2])
+            return datetime(year, month, day)
+        except (ValueError, IndexError):
+            pass
+
+    # Try Chinese format (YYYY年MM月DD日)
+    if '年' in date_str:
+        try:
+            import re
+            match = re.match(r'(\d{4})年(\d{1,2})月(\d{1,2})日', date_str)
+            if match:
+                return datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        except ValueError:
+            pass
+
+    return None
+
+
 class Certificate(Base):
     """证件表 / Certificates Table"""
     __tablename__ = 'certificates'
@@ -75,8 +128,8 @@ class Certificate(Base):
             position=data.get('position'),
             certificate_name=data.get('certificate_name'),
             certificate_number=data.get('certificate_number'),
-            issue_date=datetime.fromisoformat(data['issue_date']) if data.get('issue_date') else None,
-            expiry_date=datetime.fromisoformat(data['expiry_date']) if data.get('expiry_date') else None,
+            issue_date=parse_date(data.get('issue_date')),
+            expiry_date=parse_date(data.get('expiry_date')),
             email=data.get('email'),
             phone=data.get('phone'),
             days_remaining=data.get('days_remaining'),
@@ -84,8 +137,8 @@ class Certificate(Base):
             status_label=data.get('status_label'),
             status_icon=data.get('status_icon'),
             status_color=data.get('status_color'),
-            created_at=datetime.fromisoformat(data['created_at']) if data.get('created_at') else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data['updated_at']) if data.get('updated_at') else datetime.utcnow(),
+            created_at=parse_date(data.get('created_at')) or datetime.utcnow(),
+            updated_at=parse_date(data.get('updated_at')) or datetime.utcnow(),
         )
 
     def __repr__(self):
@@ -123,7 +176,7 @@ class UploadMetadata(Base):
             original_filepath=data.get('original_filepath'),
             format_type=data.get('format_type'),
             sheet_name=data.get('sheet_name'),
-            upload_time=datetime.fromisoformat(data['upload_time']) if data.get('upload_time') else datetime.utcnow(),
+            upload_time=parse_date(data.get('upload_time')) or datetime.utcnow(),
         )
 
     def __repr__(self):
