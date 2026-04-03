@@ -670,6 +670,12 @@ body {
 .text-right { text-align: right; }
 .text-muted { color: var(--text-light); }
 .text-warning { color: var(--status-warning); }
+.text-link { color: #3498db; text-decoration: underline; font-weight: bold; }
+.text-secondary { color: #888; }
+.text-section-title { margin: 15px 0 10px; color: #2C3E50; }
+.text-section-title-spaced { margin: 20px 0 10px; color: #2C3E50; }
+.status-badge-expires { font-weight: bold; }
+.mt-5 { margin-top: 5px; }
 .mt-10 { margin-top: 10px; }
 .mb-10 { margin-bottom: 10px; }
 .hidden { display: none !important; }

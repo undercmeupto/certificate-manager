@@ -40,6 +40,15 @@
             <button class="btn btn-success" onclick="loadData()">
                 <span>[↻]</span> 刷新
             </button>
+            <button class="btn btn-info" onclick="showNotificationSettingsModal()">
+                <span>[✉]</span> 通知设置
+            </button>
+            <button class="btn btn-warning" onclick="showSendNotificationsChoiceModal()">
+                <span>[→]</span> 发送通知
+            </button>
+            <button class="btn" onclick="showNotificationHistoryModal()">
+                <span>[H]</span> 通知历史
+            </button>
             <button class="btn" onclick="exitSession()">
                 <span>[×]</span> 退出
             </button>
@@ -305,6 +314,31 @@
         let deleteId = null;
         let sessionActive = false;  // 会话状态
 
+        // ============ Status Color Constants (matching config.py STATUS_MAP) ============
+        const STATUS_COLORS = {
+            expired: '#C0392B',
+            urgent: '#E74C3C',
+            warning: '#F39C12',
+            normal: '#27AE60',
+            unknown: '#95A5A6'
+        };
+
+        const STATUS_LABELS = {
+            expired: '已过期',
+            urgent: '紧急',
+            warning: '预警',
+            normal: '正常',
+            unknown: '日期无效'
+        };
+
+        const STATUS_ICONS = {
+            expired: 'X',
+            urgent: '!',
+            warning: '?',
+            normal: 'OK',
+            unknown: '?'
+        };
+
         // ============ Utility Functions ============
         function isValidId(id) {
             return id && id !== 'null' && id !== 'undefined';
@@ -483,7 +517,7 @@
                 }
 
                 tr.innerHTML = `
-                    <td><input type="checkbox" class="row-checkbox" value="${cert.id}"></td>
+                    <td><input type="checkbox" class="row-checkbox" value="${cert.id}" data-cert-id="${cert.id}"></td>
                     <td>${escapeHtml(cert.name)}</td>
                     <td>${escapeHtml(cert.department)}</td>
                     <td>${escapeHtml(cert.position || '')}</td>
@@ -1074,6 +1108,878 @@
             div.textContent = text || '';
             return div.innerHTML;
         }
+
+        // ============ Notification Settings ============
+        function showNotificationSettingsModal() {
+            showModal('notificationSettingsModal');
+
+            // Load existing settings
+            fetch('/api/notifications/settings')
+                .then(r => r.json())
+                .then(response => {
+                    if (response.success && response.data) {
+                        const settings = response.data;
+                        document.getElementById('smtpServer').value = settings.smtp_server || '';
+                        document.getElementById('smtpPort').value = settings.smtp_port || 587;
+                        document.getElementById('smtpUseTLS').checked = settings.smtp_use_tls !== false;
+                        document.getElementById('smtpUsername').value = settings.smtp_username || '';
+                        document.getElementById('smtpFromEmail').value = settings.smtp_from_email || '';
+                        document.getElementById('smtpFromName').value = settings.smtp_from_name || '证件管理系统';
+                        document.getElementById('defaultRecipientEmail').value = settings.default_recipient_email || '';
+                        document.getElementById('autoSendEnabled').checked = settings.auto_send_enabled || false;
+                        document.getElementById('autoSendSchedule').value = settings.auto_send_schedule || 'weekly';
+                        document.getElementById('autoSendTime').value = settings.auto_send_time || '09:00';
+                        document.getElementById('notifyExpired').checked = settings.notify_expired !== false;
+                        document.getElementById('notifyUrgent').checked = settings.notify_urgent !== false;
+                        document.getElementById('notifyWarning').checked = settings.notify_warning !== false;
+                    }
+                })
+                .catch(error => {
+                    showNotification('error', '加载设置失败');
+                });
+        }
+
+        function closeNotificationSettingsModal() {
+            closeModal('notificationSettingsModal');
+        }
+
+        function saveNotificationSettings() {
+            const data = {
+                smtp_server: document.getElementById('smtpServer').value,
+                smtp_port: parseInt(document.getElementById('smtpPort').value) || 587,
+                smtp_use_tls: document.getElementById('smtpUseTLS').checked,
+                smtp_username: document.getElementById('smtpUsername').value,
+                smtp_from_email: document.getElementById('smtpFromEmail').value,
+                smtp_from_name: document.getElementById('smtpFromName').value || '证件管理系统',
+                default_recipient_email: document.getElementById('defaultRecipientEmail').value || null,
+                auto_send_enabled: document.getElementById('autoSendEnabled').checked,
+                auto_send_schedule: document.getElementById('autoSendSchedule').value,
+                auto_send_time: document.getElementById('autoSendTime').value,
+                notify_expired: document.getElementById('notifyExpired').checked,
+                notify_urgent: document.getElementById('notifyUrgent').checked,
+                notify_warning: document.getElementById('notifyWarning').checked
+            };
+
+            // Include password only if changed
+            const password = document.getElementById('smtpPassword').value;
+            if (password) {
+                data.smtp_password = password;
+            }
+
+            fetch('/api/notifications/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(r => r.json())
+            .then(response => {
+                if (response.success) {
+                    showNotification('success', '通知设置保存成功！');
+                    closeNotificationSettingsModal();
+                } else {
+                    showNotification('error', '保存失败：' + response.error);
+                }
+            })
+            .catch(error => {
+                showNotification('error', '保存失败：' + error);
+            });
+        }
+
+        function testNotificationSettings() {
+            const testEmail = document.getElementById('testEmail').value;
+            if (!testEmail) {
+                showNotification('error', '请输入测试邮箱地址');
+                return;
+            }
+
+            fetch('/api/notifications/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ test_email: testEmail })
+            })
+            .then(r => r.json())
+            .then(response => {
+                if (response.success) {
+                    showNotification('success', '测试邮件已发送，请检查邮箱！');
+                } else {
+                    showNotification('error', '测试失败：' + response.error);
+                }
+            })
+            .catch(error => {
+                showNotification('error', '测试失败：' + error);
+            });
+        }
+
+        // ============ Send Notifications ============
+        function showSendNotificationsModal() {
+            const modal = document.getElementById('sendNotificationsModal');
+            modal.style.display = 'flex';
+
+            // Count selected checkboxes
+            const selectedCount = document.querySelectorAll('.row-checkbox:checked').length;
+            document.getElementById('selectedCount').textContent = selectedCount;
+
+            // Auto-select scope based on whether records are selected
+            if (selectedCount > 0) {
+                // Has selected records, default to "selected" mode
+                document.getElementById('sendScope').value = 'selected';
+            } else {
+                // No records selected, default to "status" mode
+                document.getElementById('sendScope').value = 'status';
+            }
+
+            // Update display based on scope
+            toggleSendOptions();
+        }
+
+        function closeSendNotificationsModal() {
+            closeModal('sendNotificationsModal');
+        }
+
+        function toggleSendOptions() {
+            const scope = document.getElementById('sendScope').value;
+            document.getElementById('sendByStatusOptions').style.display = scope === 'status' ? 'block' : 'none';
+            document.getElementById('sendSelectedInfo').style.display = scope === 'selected' ? 'block' : 'none';
+        }
+
+        function toggleCustomEmailField() {
+            const checked = document.getElementById('useCustomEmail').checked;
+            document.getElementById('customEmailGroup').style.display = checked ? 'block' : 'none';
+            document.getElementById('tipCustomEmail').style.display = checked ? 'inline' : 'none';
+            document.getElementById('tipNoEmail').style.display = checked ? 'none' : 'inline';
+
+            // Clear input when unchecked
+            if (!checked) {
+                document.getElementById('customRecipientEmail').value = '';
+            }
+        }
+
+        function sendNotifications() {
+            const scope = document.getElementById('sendScope').value;
+            const useCustomEmail = document.getElementById('useCustomEmail').checked;
+            const customEmail = document.getElementById('customRecipientEmail').value.trim();
+
+            // Validate custom email if enabled
+            if (useCustomEmail && !customEmail) {
+                showNotification('error', '请输入收件人邮箱地址 / Please enter recipient email');
+                return;
+            }
+
+            let requestData = {};
+
+            if (scope === 'status') {
+                const statusFilter = document.getElementById('sendStatusFilter').value;
+                requestData = { status_filter: statusFilter };
+
+                // Check if there are certificates to notify
+                fetch('/api/data')
+                    .then(r => r.json())
+                    .then(response => {
+                        if (response.success && response.data) {
+                            // Count certificates that match the status filter
+                            let count = 0;
+                            const status = statusFilter;
+                            response.data.forEach(cert => {
+                                if (status === 'all') {
+                                    if (cert.status === 'expired' || cert.status === 'urgent' || cert.status === 'warning') {
+                                        count++;
+                                    }
+                                } else if (cert.status === status) {
+                                    count++;
+                                }
+                            });
+
+                            if (count === 0) {
+                                showNotification('error', '没有符合条件的记录 / No matching records found');
+                                return;
+                            }
+
+                            // Add custom email if provided
+                            if (useCustomEmail && customEmail) {
+                                requestData.custom_recipient_email = customEmail;
+                            }
+
+                            // Proceed with send
+                            performSend(requestData);
+                        }
+                    });
+                return;  // Exit here, will continue in fetch callback
+            }
+
+            // For "selected" mode
+            const selectedIds = Array.from(document.querySelectorAll('.row-checkbox:checked'))
+                .map(cb => cb.dataset.certId || cb.value)  // Support both data-cert-id and value
+                .filter(id => id && id !== 'on');  // Filter out invalid IDs
+
+            if (selectedIds.length === 0) {
+                showNotification('error', '请先选择要发送通知的记录 / Please select records first');
+                return;
+            }
+
+            requestData = { certificate_ids: selectedIds };
+
+            // Add custom email if provided
+            if (useCustomEmail && customEmail) {
+                requestData.custom_recipient_email = customEmail;
+            }
+
+            if (!confirm(`确定要发送邮件通知吗？\n此操作将向符合条件的记录发送邮件。\n\nSend email notifications to matching records?`)) {
+                return;
+            }
+
+            performSend(requestData);
+        }
+
+        function performSend(requestData) {
+            fetch('/api/notifications/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestData)
+            })
+            .then(r => r.json())
+            .then(response => {
+                if (response.success) {
+                    showNotification('success', `发送完成！总计：${response.total}，成功：${response.sent}，失败：${response.failed}`);
+                    closeSendNotificationsModal();
+                } else {
+                    showNotification('error', '发送失败：' + response.error);
+                }
+            })
+            .catch(error => {
+                showNotification('error', '发送失败：' + error);
+            });
+        }
+
+        // ============ Batch Send Notifications ============
+        // Global variable to store preview data
+        let batchPreviewData = null;
+
+        // Show choice modal - Now directly opens the preview panel
+        async function showSendNotificationsChoiceModal() {
+            // Directly call the batch preview modal
+            await showBatchPreviewModal();
+        }
+
+        // Show batch preview modal
+        async function showBatchPreviewModal() {
+            closeModal('sendChoiceModal');
+
+            // Determine scope and get data
+            const selectedCount = document.querySelectorAll('.row-checkbox:checked').length;
+            const scope = selectedCount > 0 ? 'selected' : 'status';
+            const statusFilter = document.getElementById('sendStatusFilter')?.value || 'all';
+
+            const requestData = {
+                scope: scope,
+                status_filter: scope === 'status' ? statusFilter : null,
+                certificate_ids: scope === 'selected' ? Array.from(document.querySelectorAll('.row-checkbox:checked')).map(cb => cb.dataset.certId || cb.value) : []
+            };
+
+            console.log('Preview request:', JSON.stringify(requestData, null, 2));  // Debug log - show full details
+            console.log('Certificate IDs:', requestData.certificate_ids);  // Show IDs array separately
+
+            try {
+                showLoading(true);
+
+                const response = await fetch('/api/notifications/preview-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestData)
+                });
+
+                const result = await response.json();
+
+                console.log('Preview response:', result);  // Debug log
+
+                if (!result.success) {
+                    throw new Error(result.error || 'Failed to load preview');
+                }
+
+                batchPreviewData = result.data;
+                console.log('Batch preview data:', batchPreviewData);  // Debug log
+
+                if (!batchPreviewData.groups || batchPreviewData.groups.length === 0) {
+                    showNotification('warning', '没有找到符合条件的证件 / No expiring certificates found');
+                }
+
+                renderBatchPreview();
+                showModal('batchPreviewModal');
+            } catch (error) {
+                showNotification('error', '加载预览失败 / Failed to load preview: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Render batch preview table
+        function renderBatchPreview() {
+            if (!batchPreviewData) return;
+
+            // Update summary
+            document.getElementById('previewTotalPeople').textContent = batchPreviewData.total_people;
+            document.getElementById('previewTotalCerts').textContent = batchPreviewData.total_certificates;
+
+            // Render table
+            const tbody = document.getElementById('batchPreviewTableBody');
+            tbody.innerHTML = '';
+
+            batchPreviewData.groups.forEach((group, index) => {
+                const row = document.createElement('tr');
+                row.style.borderBottom = '1px solid #ddd';
+
+                // Find most urgent certificate
+                let mostUrgentStatus = 'normal';
+                let mostUrgentDays = 999;
+                let mostUrgentLabel = STATUS_LABELS.normal;
+                let mostUrgentColor = STATUS_COLORS.normal;
+                let mostUrgentIcon = STATUS_ICONS.normal;
+
+                if (group.certificates && group.certificates.length > 0) {
+                    for (const cert of group.certificates) {
+                        const days = cert.days_remaining !== undefined ? cert.days_remaining : 999;
+                        const status = cert.status || 'normal';
+
+                        // Priority: expired > urgent > warning > normal
+                        if (status === 'expired' && mostUrgentStatus !== 'expired') {
+                            mostUrgentStatus = 'expired';
+                            mostUrgentDays = days;
+                            mostUrgentLabel = cert.status_label || STATUS_LABELS.expired;
+                            mostUrgentColor = cert.status_color || STATUS_COLORS.expired;
+                            mostUrgentIcon = cert.status_icon || STATUS_ICONS.expired;
+                        } else if (status === 'urgent' && mostUrgentStatus !== 'expired' && mostUrgentStatus !== 'urgent') {
+                            mostUrgentStatus = 'urgent';
+                            mostUrgentDays = days;
+                            mostUrgentLabel = cert.status_label || STATUS_LABELS.urgent;
+                            mostUrgentColor = cert.status_color || STATUS_COLORS.urgent;
+                            mostUrgentIcon = cert.status_icon || STATUS_ICONS.urgent;
+                        } else if (status === 'warning' && mostUrgentStatus === 'normal') {
+                            mostUrgentStatus = 'warning';
+                            mostUrgentDays = days;
+                            mostUrgentLabel = cert.status_label || STATUS_LABELS.warning;
+                            mostUrgentColor = cert.status_color || STATUS_COLORS.warning;
+                            mostUrgentIcon = cert.status_icon || STATUS_ICONS.warning;
+                        }
+                    }
+                }
+
+                // Build urgent status display
+                let urgentDisplay = '';
+                if (mostUrgentStatus === 'expired') {
+                    const overdueDays = Math.abs(mostUrgentDays);
+                    urgentDisplay = `<span style="color: ${mostUrgentColor}; font-weight: bold;">${mostUrgentIcon} 过期${overdueDays}天</span>`;
+                } else if (mostUrgentStatus === 'urgent') {
+                    urgentDisplay = `<span style="color: ${mostUrgentColor}; font-weight: bold;">${mostUrgentIcon} ${mostUrgentDays}天</span>`;
+                } else if (mostUrgentStatus === 'warning') {
+                    urgentDisplay = `<span style="color: ${mostUrgentColor}; font-weight: bold;">${mostUrgentIcon} ${mostUrgentDays}天</span>`;
+                } else {
+                    urgentDisplay = `<span style="color: ${mostUrgentColor};">${mostUrgentIcon}</span>`;
+                }
+
+                // Safely get email value, default to empty string if undefined
+                const emailValue = group.email || '';
+
+                row.innerHTML = `
+                    <td style="padding: 12px;">${escapeHtml(group.person_name)}</td>
+                    <td style="padding: 12px;">
+                        <input type="email" class="form-input" style="width: 100%; min-width: 250px; font-size: 14px; padding: 10px;"
+                               data-index="${index}"
+                               value="${escapeHtml(emailValue)}"
+                               placeholder="请输入邮箱 / Enter email">
+                    </td>
+                    <td style="padding: 12px; text-align: center;">
+                        <a href="#" onclick="showCertificateDetails(${index}); return false;" class="text-link">
+                            ${group.certificate_count}
+                        </a>
+                    </td>
+                    <td style="padding: 12px; text-align: center;">${urgentDisplay}</td>
+                    <td style="padding: 12px; text-align: center;">
+                        <button onclick="removeRecipient(${index})" class="btn btn-sm btn-danger"
+                                style="padding: 5px 10px;">移除 / Remove</button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // Show certificate details for a person
+        function showCertificateDetails(groupIndex) {
+            if (!batchPreviewData || !batchPreviewData.groups[groupIndex]) return;
+
+            const group = batchPreviewData.groups[groupIndex];
+            const panel = document.getElementById('certificateDetailsPanel');
+            const nameEl = document.getElementById('detailsPersonName');
+            const contentEl = document.getElementById('certificateDetailsContent');
+
+            nameEl.textContent = `${group.person_name} 的证件 / Certificates for ${group.person_name}`;
+
+            let html = '<table style="width: 100%; border-collapse: collapse;">';
+            html += '<thead><tr style="background: #f9f9f9;"><th style="padding: 10px; text-align: left; border: 1px solid #ddd;">证件名称</th><th style="padding: 10px; text-align: center; border: 1px solid #ddd;">到期日期</th><th style="padding: 10px; text-align: center; border: 1px solid #ddd;">状态</th></tr></thead><tbody>';
+
+            group.certificates.forEach(cert => {
+                const statusColor = cert.status_color || '#666';
+                html += `
+                    <tr>
+                        <td style="padding: 10px; border: 1px solid #ddd;">${escapeHtml(cert.certificate_name)}</td>
+                        <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">${cert.expiry_date}</td>
+                        <td style="padding: 10px; text-align: center; border: 1px solid #ddd;">
+                            <span style="color: ${statusColor}; font-weight: bold;">${cert.status_label}</span>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            contentEl.innerHTML = html;
+            panel.style.display = 'block';
+        }
+
+        // Remove recipient from batch
+        function removeRecipient(index) {
+            if (!batchPreviewData) return;
+
+            if (confirm('确定要移除此收件人吗？ / Remove this recipient?')) {
+                batchPreviewData.groups.splice(index, 1);
+                batchPreviewData.total_people--;
+                renderBatchPreview();
+                document.getElementById('certificateDetailsPanel').style.display = 'none';
+            }
+        }
+
+        // Confirm and send batch
+        async function confirmBatchSend() {
+            if (!batchPreviewData || batchPreviewData.groups.length === 0) {
+                showNotification('error', '没有要发送的收件人 / No recipients to send');
+                return;
+            }
+
+            // Collect modified email addresses
+            const recipients = [];
+            const emailInputs = document.querySelectorAll('#batchPreviewTableBody input[type="email"]');
+
+            batchPreviewData.groups.forEach((group, index) => {
+                const emailInput = emailInputs[index];
+                const modifiedEmail = emailInput ? emailInput.value.trim() : group.email;
+
+                if (!modifiedEmail) {
+                    throw new Error(`${group.person_name} 的邮箱地址不能为空 / Email cannot be empty`);
+                }
+
+                recipients.push({
+                    person_name: group.person_name,
+                    email: modifiedEmail,
+                    certificate_ids: group.certificates.map(c => c.id)
+                });
+            });
+
+            // Confirm
+            if (!confirm(`确定要向 ${recipients.length} 人发送邮件通知吗？/ Send notifications to ${recipients.length} people?`)) {
+                return;
+            }
+
+            try {
+                showLoading(true);
+
+                const response = await fetch('/api/notifications/send-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ recipients: recipients })
+                });
+
+                const result = await response.json();
+
+                if (!result.success) {
+                    throw new Error(result.error || 'Failed to send');
+                }
+
+                // Show results
+                const successCount = result.results.filter(r => r.success).length;
+                const failCount = result.results.filter(r => !r.success).length;
+
+                showNotification('success', `发送完成 / Sent: ${successCount} 成功 / Success, ${failCount} 失败 / Failed`);
+
+                closeModal('batchPreviewModal');
+
+                // Reload history if open
+                if (document.getElementById('notificationHistoryModal').style.display === 'flex') {
+                    loadNotificationHistory();
+                }
+            } catch (error) {
+                showNotification('error', '发送失败 / Send failed: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Helper function to show modals
+        function showModal(modalId) {
+            const modal = document.getElementById(modalId);
+            if (modal) {
+                modal.classList.add('active');
+            }
+        }
+
+        // Helper function to close modals
+        function closeModal(modalId) {
+            const modal = document.getElementById(modalId);
+            if (modal) {
+                modal.classList.remove('active');
+            }
+            // Clear batch preview data to prevent memory leaks
+            if (modalId === 'batchPreviewModal') {
+                batchPreviewData = null;
+            }
+        }
+
+        // ============ Notification History ============
+        function showNotificationHistoryModal() {
+            showModal('notificationHistoryModal');
+            loadNotificationHistory();
+        }
+
+        function closeNotificationHistoryModal() {
+            closeModal('notificationHistoryModal');
+        }
+
+        function loadNotificationHistory() {
+            const statusFilter = document.getElementById('historyStatusFilter').value;
+            let url = '/api/notifications/history';
+            if (statusFilter) {
+                url += '?status=' + statusFilter;
+            }
+
+            fetch(url)
+                .then(r => r.json())
+                .then(response => {
+                    if (response.success) {
+                        renderNotificationHistory(response.data);
+                    }
+                })
+                .catch(error => {
+                    showNotification('error', '加载历史失败');
+                });
+        }
+
+        function renderNotificationHistory(records) {
+            const tbody = document.getElementById('notificationHistoryTable');
+            tbody.innerHTML = '';
+
+            if (!records || records.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px;">暂无通知记录 / No records</td></tr>';
+                return;
+            }
+
+            records.forEach(record => {
+                const row = document.createElement('tr');
+                const statusClass = record.send_status === 'sent' ? 'status-success' : 'status-error';
+                const statusText = record.send_status === 'sent' ? '成功' : '失败';
+                const sendTypeText = record.send_type === 'auto' ? '自动' : '手动';
+
+                row.innerHTML = `
+                    <td>${new Date(record.created_at).toLocaleString('zh-CN')}</td>
+                    <td>${escapeHtml(record.recipient_name)}<br><small style="color: #888;">${escapeHtml(record.recipient_email)}</small></td>
+                    <td>${escapeHtml(record.certificate_name)}</td>
+                    <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                    <td>${sendTypeText}</td>
+                    <td style="font-size: 12px;">${escapeHtml(record.error_message || '发送成功')}</td>
+                `;
+
+                tbody.appendChild(row);
+            });
+        }
     </script>
+
+    <!-- Notification Settings Modal -->
+    <div class="modal-overlay" id="notificationSettingsModal">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <div class="modal-title">邮件通知设置 / EMAIL SETTINGS</div>
+                <button class="modal-close" onclick="closeNotificationSettingsModal()">×</button>
+            </div>
+            <div class="modal-body" style="max-height: 500px; overflow-y: auto;">
+                <!-- SMTP Configuration -->
+                <h4 class="text-section-title">SMTP配置 / SMTP Configuration</h4>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">SMTP服务器</label>
+                        <input type="text" class="form-input" id="smtpServer" placeholder="smtp.example.com">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">SMTP端口</label>
+                        <input type="number" class="form-input" id="smtpPort" value="587">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="smtpUseTLS" checked>
+                        使用TLS加密 / Use TLS
+                    </label>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">SMTP用户名</label>
+                        <input type="text" class="form-input" id="smtpUsername" placeholder="user@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">SMTP密码</label>
+                        <input type="password" class="form-input" id="smtpPassword" placeholder="••••••••">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">发件人邮箱</label>
+                        <input type="email" class="form-input" id="smtpFromEmail" placeholder="noreply@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">发件人名称</label>
+                        <input type="text" class="form-input" id="smtpFromName" value="证件管理系统">
+                    </div>
+                    <div class="form-group" style="flex: 2;">
+                        <label class="form-label">默认收件人邮箱 / Default Recipient</label>
+                        <input type="email" class="form-input" id="defaultRecipientEmail" placeholder="admin@example.com（用于无邮箱的证件 / For certs without email）">
+                    </div>
+                </div>
+
+                <!-- Auto-send Configuration -->
+                <h4 class="text-section-title-spaced">自动发送配置 / AUTO-SEND</h4>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="autoSendEnabled">
+                        启用自动发送 / Enable auto-send
+                    </label>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">发送频率</label>
+                        <select class="form-input" id="autoSendSchedule">
+                            <option value="daily">每日 / Daily</option>
+                            <option value="weekly" selected>每周 / Weekly</option>
+                            <option value="monthly">每月 / Monthly</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">发送时间</label>
+                        <input type="time" class="form-input" id="autoSendTime" value="09:00">
+                    </div>
+                </div>
+
+                <!-- Notification Rules -->
+                <h4 class="text-section-title-spaced">通知规则 / NOTIFICATION RULES</h4>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="notifyExpired" checked>
+                        通知已过期证件 / Notify expired
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="notifyUrgent" checked>
+                        通知紧急证件（&lt;30天）/ Notify urgent (&lt;30 days)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="notifyWarning" checked>
+                        通知预警证件（30-90天）/ Notify warning (30-90 days)
+                    </label>
+                </div>
+
+                <!-- Test Email -->
+                <h4 class="text-section-title-spaced">测试配置 / TEST</h4>
+                <div class="form-group">
+                    <label class="form-label">测试邮箱</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="email" class="form-input" id="testEmail" placeholder="test@example.com" style="flex: 1;">
+                        <button type="button" class="btn btn-info" onclick="testNotificationSettings()">发送测试</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeNotificationSettingsModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveNotificationSettings()">保存设置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Send Notifications Modal -->
+    <div class="modal-overlay" id="sendNotificationsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">发送邮件通知 / SEND NOTIFICATIONS</div>
+                <button class="modal-close" onclick="closeSendNotificationsModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">发送范围 / SEND SCOPE</label>
+                    <select class="form-input" id="sendScope" onchange="toggleSendOptions()">
+                        <option value="status">按状态发送 / By status</option>
+                        <option value="selected">仅选中记录 / Selected only</option>
+                    </select>
+                </div>
+
+                <div id="sendByStatusOptions">
+                    <div class="form-group">
+                        <label class="form-label">状态过滤 / STATUS FILTER</label>
+                        <select class="form-input" id="sendStatusFilter">
+                            <option value="all">全部（已过期+紧急+预警）/ All</option>
+                            <option value="expired">已过期 / Expired</option>
+                            <option value="urgent">紧急（&lt;30天）/ Urgent</option>
+                            <option value="warning">预警（30-90天）/ Warning</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="sendSelectedInfo" style="display: none;">
+                    <p style="color: #2C3E50;">将向 <strong><span id="selectedCount">0</span></strong> 条选中记录发送邮件通知。</p>
+                </div>
+
+                <!-- Custom Recipient Email -->
+                <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #E0E0E0;">
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="useCustomEmail" onchange="toggleCustomEmailField()">
+                            使用自定义收件人邮箱 / Use custom recipient email
+                        </label>
+                    </div>
+                    <div class="form-group" id="customEmailGroup" style="display: none;">
+                        <label class="form-label">收件人邮箱 / RECIPIENT EMAIL</label>
+                        <input type="email" class="form-input" id="customRecipientEmail" placeholder="test@example.com">
+                        <small style="color: #888; display: block; margin-top: 5px;">
+                            提示：使用自定义邮箱后，所有通知将发送到此邮箱地址
+                        </small>
+                    </div>
+                </div>
+
+                <div style="background: #FFF3CD; border-left: 4px solid #F39C12; padding: 12px; margin-top: 15px; font-size: 14px;">
+                    <strong>提示 / TIP：</strong>
+                    • 默认使用证件中存储的邮箱地址
+                    <span id="tipNoEmail" style="display: none;">• 无邮箱的记录将被跳过 / Records without email will be skipped</span>
+                    <span id="tipCustomEmail" style="display: none;">• 自定义邮箱模式下，所有邮件将发送到指定邮箱 / In custom mode, all emails will be sent to the specified address</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeSendNotificationsModal()">取消</button>
+                <button class="btn btn-primary" onclick="sendNotifications()">发送通知</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification History Modal -->
+    <div class="modal-overlay" id="notificationHistoryModal">
+        <div class="modal" style="max-width: 900px;">
+            <div class="modal-header">
+                <div class="modal-title">通知历史 / NOTIFICATION HISTORY</div>
+                <button class="modal-close" onclick="closeNotificationHistoryModal()">×</button>
+            </div>
+            <div class="modal-body" style="max-height: 500px; overflow-y: auto;">
+                <div class="form-group">
+                    <label class="form-label">状态过滤 / STATUS FILTER</label>
+                    <select class="form-input" id="historyStatusFilter" onchange="loadNotificationHistory()">
+                        <option value="">全部 / All</option>
+                        <option value="sent">已发送 / Sent</option>
+                        <option value="failed">发送失败 / Failed</option>
+                    </select>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>时间 / TIME</th>
+                                <th>收件人 / RECIPIENT</th>
+                                <th>证件名称 / CERTIFICATE</th>
+                                <th style="width: 80px;">状态 / STATUS</th>
+                                <th>类型 / TYPE</th>
+                                <th>结果 / RESULT</th>
+                            </tr>
+                        </thead>
+                        <tbody id="notificationHistoryTable">
+                            <!-- Dynamic content -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeNotificationHistoryModal()">关闭</button>
+                <button class="btn" onclick="loadNotificationHistory()">刷新</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Send Choice Modal -->
+    <div class="modal-overlay" id="sendChoiceModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">选择发送方式 / CHOOSE SEND MODE</div>
+                <button class="modal-close" onclick="closeModal('sendChoiceModal')">×</button>
+            </div>
+            <div class="modal-body">
+                <p>请选择邮件发送方式 / Please choose email sending mode:</p>
+                <div style="margin: 20px 0;">
+                    <button onclick="showBatchPreviewModal()" class="btn btn-primary" style="width: 100%; margin-bottom: 10px; padding: 15px;">
+                        <span style="font-size: 1.5em;">📋</span><br>
+                        <strong>预览并发送 / PREVIEW & SEND</strong><br>
+                        <small style="font-size: 0.9em; opacity: 0.8;">按人员汇总，可编辑邮箱 / Group by person, editable emails</small>
+                    </button>
+                    <button onclick="showDirectSendModal()" class="btn btn-secondary" style="width: 100%; padding: 15px;">
+                        <span style="font-size: 1.5em;">🚀</span><br>
+                        <strong>直接发送 / SEND DIRECT</strong><br>
+                        <small style="font-size: 0.9em; opacity: 0.8;">每个证件单独发送（原有方式） / Original mode (one email per cert)</small>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Batch Preview Modal -->
+    <div class="modal-overlay" id="batchPreviewModal">
+        <div class="modal" style="max-width: 950px;">
+            <div class="modal-header">
+                <div class="modal-title">发送证件预警通知 / SEND NOTIFICATIONS</div>
+                <button class="modal-close" onclick="closeModal('batchPreviewModal')">×</button>
+            </div>
+            <div class="modal-body" style="max-height: 600px; overflow-y: auto;">
+                <!-- Summary -->
+                <div style="background: #e3f2fd; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                    <strong>发送概览 / Summary:</strong>
+                    将向 <span id="previewTotalPeople">0</span> 人发送
+                    共 <span id="previewTotalCerts">0</span> 个证件提醒
+                </div>
+
+                <!-- Info Tip -->
+                <div style="background: #fff3cd; padding: 12px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #ffc107;">
+                    <small style="color: #856404;">
+                        💡 <strong>提示 / Tip:</strong> 系统已自动收集每位员工的<strong>所有预警证件</strong>（过期+紧急+预警，90天内）。<br>
+                        System has automatically collected <strong>ALL warning certificates</strong> (expired+urgent+warning, within 90 days) for each employee.
+                    </small>
+                </div>
+
+                <!-- Recipients Table -->
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background: #f5f5f5; border-bottom: 2px solid #ddd;">
+                            <th style="padding: 12px; text-align: left;">姓名 / Name</th>
+                            <th style="padding: 12px; text-align: left; width: 21%;">邮箱 / Email</th>
+                            <th style="padding: 12px; text-align: center;">证件数 / Count</th>
+                            <th style="padding: 12px; text-align: center;">最紧急 / Urgent</th>
+                            <th style="padding: 12px; text-align: center;">操作 / Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="batchPreviewTableBody">
+                        <!-- Dynamic content -->
+                    </tbody>
+                </table>
+
+                <!-- Certificate Details (hidden by default) -->
+                <div id="certificateDetailsPanel" style="display: none; margin-top: 20px; border: 1px solid #ddd; border-radius: 5px; padding: 15px;">
+                    <h4 id="detailsPersonName" style="margin-top: 0;">证件详情 / Certificate Details</h4>
+                    <div id="certificateDetailsContent"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal('batchPreviewModal')">取消 / CANCEL</button>
+                <button class="btn btn-primary" onclick="confirmBatchSend()">确认发送 / CONFIRM SEND</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

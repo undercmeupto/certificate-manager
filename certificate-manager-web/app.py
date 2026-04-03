@@ -5,10 +5,14 @@ Web-based certificate management with industrial UI
 import os
 import uuid
 import json
+import logging
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_file, session
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+
+# Setup logger
+logger = logging.getLogger(__name__)
 
 from config import (
     DATABASE_FILE, DATA_FILE, UPLOAD_FOLDER, EXPORT_FOLDER,
@@ -40,7 +44,20 @@ from database import (
     get_statistics as db_get_statistics,
     search_certificates as db_search_certificates,
     get_certificates_by_days as db_get_certificates_by_days,
+    # Notification imports
+    get_notification_settings,
+    get_notification_settings_with_password,
+    save_notification_settings,
+    get_notification_records,
+    get_notification_records_by_status,
+    create_notification_record,
+    get_notification_preference,
+    set_notification_preference,
 )
+
+# Import notification modules
+from utils.email_service import email_service
+from utils.notification_scheduler import notification_scheduler
 
 # ============ Flask App Setup ============
 app = Flask(__name__)
@@ -58,6 +75,19 @@ os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
 
 # Initialize database on startup
 init_db()
+
+# Initialize notification system
+def init_notifications():
+    """Initialize notification system on startup"""
+    try:
+        settings = get_notification_settings()
+        if settings and settings.get('auto_send_enabled'):
+            notification_scheduler.start()
+            print("Auto-send notifications enabled / 自动发送通知已启用")
+    except Exception as e:
+        print(f"Failed to initialize notifications / 初始化通知失败: {e}")
+
+init_notifications()
 
 # ============ Helper Functions ============
 
@@ -562,6 +592,297 @@ def session_status():
         'active': get_session_state(),
         'has_data': stats.get('total', 0) > 0
     })
+
+
+# ============ Notification Settings Endpoints ============
+
+@app.route('/api/notifications/settings', methods=['GET'])
+def get_notification_settings_endpoint():
+    """获取通知设置 / Get notification settings"""
+    try:
+        settings = get_notification_settings()
+        return jsonify({'success': True, 'data': settings})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/notifications/settings', methods=['POST'])
+def save_notification_settings_endpoint():
+    """保存通知设置 / Save notification settings"""
+
+    try:
+        data = request.get_json()
+        logger.info(f"Saving notification settings: {list(data.keys())}")
+
+        # Validate required fields for SMTP
+        if data.get('smtp_server'):
+            if not data.get('smtp_username') or not data.get('smtp_from_email'):
+                logger.warning("Missing required SMTP fields")
+                return jsonify({'success': False, 'error': '缺少SMTP配置字段 / Missing SMTP fields'}), 400
+
+        # If password not provided, keep existing password
+        if 'smtp_password' not in data or not data['smtp_password']:
+            logger.info("Password not provided, keeping existing")
+            existing_settings = get_notification_settings_with_password()
+            if existing_settings and existing_settings.get('smtp_password'):
+                data['smtp_password'] = existing_settings['smtp_password']
+                logger.info("Using existing password from database")
+
+        # Save settings
+        save_notification_settings(data)
+        logger.info("Settings saved successfully")
+
+        # Reconfigure email service and scheduler
+        email_service.configure_smtp(data)
+        if data.get('auto_send_enabled'):
+            notification_scheduler.start()
+            logger.info("Auto-send scheduler started")
+        else:
+            notification_scheduler.stop()
+            logger.info("Auto-send scheduler stopped")
+
+        return jsonify({'success': True, 'message': '设置保存成功 / Settings saved successfully'})
+    except Exception as e:
+        logger.error(f"Error saving settings: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/notifications/test', methods=['POST'])
+def test_notification_settings():
+    """测试邮件设置 / Test email settings"""
+
+    try:
+        data = request.get_json()
+        logger.info(f"Test email request data: {data}")
+
+        test_email = data.get('test_email')
+
+        if not test_email:
+            logger.warning("No test email provided")
+            return jsonify({'success': False, 'error': '请提供测试邮箱 / Please provide test email'}), 400
+
+        # Get current settings WITH password
+        settings = get_notification_settings_with_password()
+        logger.info(f"Current settings (with password): smtp_server={settings.get('smtp_server') if settings else None}, has_password={bool(settings.get('smtp_password')) if settings else False}")
+
+        if not settings or not settings.get('smtp_server'):
+            logger.warning("SMTP not configured")
+            return jsonify({
+                'success': False,
+                'error': '未配置SMTP设置，请先在通知设置中配置邮件服务器 / SMTP not configured. Please configure SMTP settings first.'
+            }), 400
+
+        # Check if password exists
+        if not settings.get('smtp_password'):
+            logger.warning("SMTP password not set")
+            return jsonify({
+                'success': False,
+                'error': '未设置SMTP密码，请重新保存通知设置 / SMTP password not set. Please re-save notification settings with password.'
+            }), 400
+
+        # Configure and test
+        email_service.configure_smtp(settings)
+        success, message = email_service.test_connection()
+        logger.info(f"Connection test result: success={success}, message={message}")
+
+        if not success:
+            return jsonify({'success': False, 'error': f"连接失败: {message} / Connection failed: {message}"}), 400
+
+        # Send test email
+        subject = '证件管理系统 - 测试邮件 / Certificate Manager - Test Email'
+        body = '''这是一封测试邮件。
+
+如果您收到此邮件，说明SMTP配置正确。
+
+This is a test email. If you receive this email, your SMTP configuration is correct.
+
+此邮件由证件管理系统自动发送，请勿回复。
+This email was sent automatically by Certificate Manager, please do not reply.'''
+
+        success, message = email_service.send_email(test_email, subject, body)
+        logger.info(f"Send email result: success={success}, message={message}")
+
+        if success:
+            return jsonify({'success': True, 'message': '测试邮件发送成功 / Test email sent successfully'})
+        else:
+            return jsonify({'success': False, 'error': f"发送失败: {message} / Send failed: {message}"}), 400
+
+    except Exception as e:
+        logger.error(f"Test email error: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============ Notification Send Endpoints ============
+
+@app.route('/api/notifications/send', methods=['POST'])
+def send_notifications():
+    """手动发送通知 / Send notifications manually"""
+    try:
+        data = request.get_json()
+        certificate_ids = data.get('certificate_ids')
+        status_filter = data.get('status_filter')
+        custom_recipient_email = data.get('custom_recipient_email')  # New parameter
+
+        if not certificate_ids and not status_filter:
+            return jsonify({'success': False, 'error': '请指定要发送的证件或状态 / Please specify certificates or status'}), 400
+
+        # Trigger send with custom email parameter
+        result = notification_scheduler.trigger_manual_send(certificate_ids, status_filter, custom_recipient_email)
+
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/notifications/preview-batch', methods=['POST'])
+def preview_batch_notifications():
+    """预览批量通知（按人员分组）/ Preview batch notifications (grouped by person)"""
+    try:
+        data = request.get_json()
+        scope = data.get('scope', 'status')  # 'status' or 'selected'
+        status_filter = data.get('status_filter')
+        certificate_ids = data.get('certificate_ids', [])
+
+        logger.info(f"Preview batch request - scope: {scope}, status_filter: {status_filter}")
+        logger.info(f"Certificate IDs: {certificate_ids}")  # Log actual IDs
+        logger.info(f"Number of certificate IDs: {len(certificate_ids) if certificate_ids else 0}")
+
+        # Get default email from settings
+        settings = get_notification_settings_with_password()
+        default_email = settings.get('default_recipient_email') if settings else None
+
+        # Get certificates based on scope
+        if scope == 'selected' and certificate_ids:
+            certs_to_preview = certificate_ids
+        else:
+            certs_to_preview = None  # Will filter all by status
+
+        # Get preview data
+        preview_data = notification_scheduler.get_preview_data(
+            certificate_ids=certs_to_preview,
+            status_filter=status_filter if scope == 'status' else None,
+            default_email=default_email
+        )
+
+        logger.info(f"Preview data result - total_people: {preview_data.get('total_people', 0)}, total_certificates: {preview_data.get('total_certificates', 0)}")
+
+        return jsonify({
+            'success': True,
+            'data': preview_data
+        })
+    except Exception as e:
+        logger.error(f"Preview batch error: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/notifications/send-batch', methods=['POST'])
+def send_batch_notifications():
+    """发送批量通知（按人员分组，支持修改收件人）/ Send batch notifications (grouped by person, with editable recipients)"""
+    try:
+        data = request.get_json()
+        recipients = data.get('recipients', [])
+
+        if not recipients:
+            return jsonify({'success': False, 'error': '请提供收件人列表 / Please provide recipients list'}), 400
+
+        # Validate recipients
+        for recipient in recipients:
+            if not recipient.get('person_name') or not recipient.get('email') or not recipient.get('certificate_ids'):
+                return jsonify({'success': False, 'error': '收件人信息不完整 / Incomplete recipient information'}), 400
+
+        # Trigger batch send
+        result = notification_scheduler.trigger_batch_send(recipients)
+
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/notifications/preview', methods=['POST'])
+def preview_notification():
+    """预览通知邮件 / Preview notification email"""
+    try:
+        data = request.get_json()
+        certificate_id = data.get('certificate_id')
+
+        if not certificate_id:
+            return jsonify({'success': False, 'error': '请提供证件ID / Please provide certificate ID'}), 400
+
+        # Get certificate
+        cert = db_get_certificate_by_id(certificate_id)
+        if not cert:
+            return jsonify({'success': False, 'error': '证件不存在 / Certificate not found'}), 404
+
+        # Generate email preview
+        email_data = email_service.generate_certificate_email(cert)
+
+        return jsonify({
+            'success': True,
+            'preview': {
+                'to_email': email_data['to_email'],
+                'subject': email_data['subject'],
+                'body': email_data['body']
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============ Notification History Endpoints ============
+
+@app.route('/api/notifications/history', methods=['GET'])
+def get_notification_history():
+    """获取通知历史 / Get notification history"""
+    try:
+        limit = request.args.get('limit', 100, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        status = request.args.get('status')
+
+        if status:
+            records = get_notification_records_by_status(status)
+        else:
+            records = get_notification_records(limit=limit, offset=offset)
+
+        return jsonify({'success': True, 'data': records})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============ Notification Preferences Endpoints ============
+
+@app.route('/api/notifications/preferences', methods=['GET'])
+def get_notification_preferences_endpoint():
+    """获取通知偏好设置 / Get notification preferences"""
+    try:
+        email = request.args.get('email')
+        if email:
+            pref = get_notification_preference(email)
+            return jsonify({'success': True, 'data': pref})
+        else:
+            prefs = get_notification_preferences()
+            return jsonify({'success': True, 'data': prefs})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/notifications/preferences', methods=['POST'])
+def set_notification_preferences_endpoint():
+    """设置通知偏好 / Set notification preferences"""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        enabled = data.get('enabled', True)
+        name = data.get('name')
+        department = data.get('department')
+
+        if not email:
+            return jsonify({'success': False, 'error': '请提供邮箱地址 / Please provide email'}), 400
+
+        set_notification_preference(email, enabled, name, department)
+
+        return jsonify({'success': True, 'message': '偏好设置保存成功 / Preferences saved'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ============ Error Handlers ============
