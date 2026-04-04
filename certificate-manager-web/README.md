@@ -221,13 +221,8 @@ python migrations/migrate_json_to_sqlite.py
 使用 PyInstaller 将应用打包为独立可执行文件：
 
 ```bash
-# 安装 PyInstaller
 pip install pyinstaller
-
-# 打包（单文件模式）
-pyinstaller --onefile --windowed --add-data "templates;templates" --add-data "static;static" app.py
-
-# 或使用 spec 文件（更灵活）
+pyinstaller --onefile --windowed --add-data "templates;templates" --add-data "static;static" --icon=app_icon.ico app.py
 pyinstaller certificate-manager.spec
 ```
 

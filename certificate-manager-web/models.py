@@ -3,7 +3,7 @@ SQLAlchemy ORM Models for Certificate Management System
 证件管理系统数据库模型
 """
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, Date, CheckConstraint
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, Date, Text, CheckConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 
@@ -205,3 +205,157 @@ class SessionState(Base):
 
     def __repr__(self):
         return f"<SessionState(id={self.id}, active={self.active})>"
+
+
+class NotificationSettings(Base):
+    """邮件通知设置表 / Email Notification Settings Table"""
+    __tablename__ = 'notification_settings'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # SMTP Configuration / SMTP配置
+    smtp_server = Column(String(255))  # SMTP服务器
+    smtp_port = Column(Integer, default=587)  # SMTP端口
+    smtp_use_tls = Column(Boolean, default=True)  # 使用TLS
+    smtp_username = Column(String(255))  # SMTP用户名
+    smtp_password = Column(String(500))  # SMTP密码（加密存储）
+    smtp_from_email = Column(String(255))  # 发件人邮箱
+    smtp_from_name = Column(String(255), default='证件管理系统')  # 发件人名称
+
+    # Auto-send Configuration / 自动发送配置
+    auto_send_enabled = Column(Boolean, default=False)  # 启用自动发送
+    auto_send_schedule = Column(String(50), default='weekly')  # 发送频率: daily, weekly, monthly
+    auto_send_time = Column(String(10), default='09:00')  # 发送时间 (HH:MM)
+    auto_send_day_of_week = Column(Integer, default=1)  # 每周几发送 (1=Monday)
+
+    # Notification Rules / 通知规则
+    notify_expired = Column(Boolean, default=True)  # 通知已过期
+    notify_urgent = Column(Boolean, default=True)  # 通知紧急（<30天）
+    notify_warning = Column(Boolean, default=True)  # 通知预警（30-90天）
+    urgent_threshold = Column(Integer, default=30)  # 紧急阈值（天）
+    warning_threshold = Column(Integer, default=90)  # 预警阈值（天）
+
+    # Email Content / 邮件内容
+    email_subject_template = Column(String(500), default='证件到期提醒 - {certificate_name}')  # 邮件主题模板
+    email_greeting = Column(String(500), default='尊敬的{name}：')  # 邮件称呼
+    default_recipient_email = Column(String(255), nullable=True)  # 默认收件人邮箱（用于无邮箱的证件）
+
+    # Timestamps / 时间戳
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self, include_password=False):
+        """Convert to dictionary / 转换为字典"""
+        result = {
+            'id': self.id,
+            'smtp_server': self.smtp_server,
+            'smtp_port': self.smtp_port,
+            'smtp_use_tls': self.smtp_use_tls,
+            'smtp_username': self.smtp_username,
+            'smtp_from_email': self.smtp_from_email,
+            'smtp_from_name': self.smtp_from_name,
+            'auto_send_enabled': self.auto_send_enabled,
+            'auto_send_schedule': self.auto_send_schedule,
+            'auto_send_time': self.auto_send_time,
+            'auto_send_day_of_week': self.auto_send_day_of_week,
+            'notify_expired': self.notify_expired,
+            'notify_urgent': self.notify_urgent,
+            'notify_warning': self.notify_warning,
+            'urgent_threshold': self.urgent_threshold,
+            'warning_threshold': self.warning_threshold,
+            'email_subject_template': self.email_subject_template,
+            'email_greeting': self.email_greeting,
+            'default_recipient_email': self.default_recipient_email,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+        if include_password:
+            result['smtp_password'] = self.smtp_password
+        return result
+
+    def __repr__(self):
+        return f"<NotificationSettings(id={self.id}, smtp_server={self.smtp_server})>"
+
+
+class NotificationRecord(Base):
+    """邮件发送记录表 / Email Send History Table"""
+    __tablename__ = 'notification_records'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Recipient Info / 收件人信息
+    certificate_id = Column(String(36), index=True)  # 关联证件ID
+    recipient_name = Column(String(100))  # 收件人姓名
+    recipient_email = Column(String(255))  # 收件人邮箱
+    certificate_name = Column(String(100))  # 证件名称
+    expiry_date = Column(Date)  # 到期日期
+    days_remaining = Column(Integer)  # 剩余天数
+    status = Column(String(20))  # 证件状态
+
+    # Send Info / 发送信息
+    send_type = Column(String(20))  # 发送类型: manual, auto
+    send_status = Column(String(20), default='pending', index=True)  # 发送状态: pending, sent, failed
+    error_message = Column(String(500))  # 错误信息
+
+    # Email Details / 邮件详情
+    email_subject = Column(String(500))  # 邮件主题
+    email_body = Column(Text)  # 邮件正文
+
+    # Timestamps / 时间戳
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)  # 创建时间
+    sent_at = Column(DateTime)  # 实际发送时间
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'certificate_id': self.certificate_id,
+            'recipient_name': self.recipient_name,
+            'recipient_email': self.recipient_email,
+            'certificate_name': self.certificate_name,
+            'expiry_date': self.expiry_date.isoformat() if self.expiry_date else None,
+            'days_remaining': self.days_remaining,
+            'status': self.status,
+            'send_type': self.send_type,
+            'send_status': self.send_status,
+            'error_message': self.error_message,
+            'email_subject': self.email_subject,
+            'email_body': self.email_body,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'sent_at': self.sent_at.isoformat() if self.sent_at else None,
+        }
+
+    def __repr__(self):
+        return f"<NotificationRecord(id={self.id}, to={self.recipient_email}, status={self.send_status})>"
+
+
+class NotificationPreference(Base):
+    """通知偏好设置表 / User Notification Preferences Table"""
+    __tablename__ = 'notification_preferences'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # User identification (by email or name+dept combination)
+    email = Column(String(255), index=True, unique=True)  # 邮箱作为唯一标识
+    name = Column(String(100))  # 姓名
+    department = Column(String(100))  # 部门
+
+    # Preferences / 偏好设置
+    email_enabled = Column(Boolean, default=True)  # 启用邮件通知
+
+    # Timestamps / 时间戳
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'email': self.email,
+            'name': self.name,
+            'department': self.department,
+            'email_enabled': self.email_enabled,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+    def __repr__(self):
+        return f"<NotificationPreference(id={self.id}, email={self.email}, enabled={self.email_enabled})>"

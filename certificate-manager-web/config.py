@@ -73,3 +73,122 @@ CERTIFICATE_TYPES = [
     {'name': '健康证', 'num_col': 30, 'issue_col': 31, 'exp_col': 32},
     {'name': '岗位证', 'num_col': 33, 'issue_col': 34, 'exp_col': 35},
 ]
+
+# ============ 邮件通知配置 ============
+# Email Notification Configuration
+
+# SMTP默认配置
+DEFAULT_SMTP_PORT = 587
+DEFAULT_SMTP_USE_TLS = True
+DEFAULT_AUTO_SEND_TIME = '09:00'
+DEFAULT_AUTO_SEND_DAY = 1  # Monday
+
+# 通知频率选项 / Notification schedule options
+SCHEDULE_DAILY = 'daily'
+SCHEDULE_WEEKLY = 'weekly'
+SCHEDULE_MONTHLY = 'monthly'
+
+NOTIFICATION_SCHEDULES = {
+    SCHEDULE_DAILY: '每日发送',
+    SCHEDULE_WEEKLY: '每周发送',
+    SCHEDULE_MONTHLY: '每月发送'
+}
+
+# 发送状态常量 / Send status constants
+SEND_STATUS_PENDING = 'pending'
+SEND_STATUS_SENT = 'sent'
+SEND_STATUS_FAILED = 'failed'
+
+# 发送类型常量 / Send type constants
+SEND_TYPE_MANUAL = 'manual'
+SEND_TYPE_AUTO = 'auto'
+
+# 邮件发送限制
+EMAIL_BATCH_SIZE = 50  # 每批发送邮件数
+EMAIL_DELAY_SECONDS = 1  # 批次间延迟（秒）
+
+# 邮件模板（中文）
+EMAIL_TEMPLATES = {
+    'subject': '证件到期提醒 - {certificate_name}',
+    'greeting': '尊敬的{name}：',
+    'body_expired': '''您的证件【{certificate_name}】已过期！
+
+证件信息：
+- 证件名称：{certificate_name}
+- 证件号码：{certificate_number}
+- 到期日期：{expiry_date}
+- 状态：已过期（过期 {days_overdue} 天）
+
+请您尽快办理证件续期手续。
+
+此邮件由证件管理系统自动发送，请勿回复。''',
+
+    'body_urgent': '''您的证件【{certificate_name}】即将到期！
+
+证件信息：
+- 证件名称：{certificate_name}
+- 证件号码：{certificate_number}
+- 到期日期：{expiry_date}
+- 剩余天数：{days_remaining} 天
+
+请您尽快办理证件续期手续，以免影响正常工作。
+
+此邮件由证件管理系统自动发送，请勿回复。''',
+
+    'body_warning': '''温馨提醒：您的证件【{certificate_name}】将在{days_remaining}天后到期。
+
+证件信息：
+- 证件名称：{certificate_name}
+- 证件号码：{certificate_number}
+- 到期日期：{expiry_date}
+
+请您提前安排证件续期事宜。
+
+此邮件由证件管理系统自动发送，请勿回复。''',
+
+    # 批量邮件模板（按人员汇总） / Batch Email Templates (Grouped by Person)
+    'subject_batch': '证件到期提醒 - 您有 {count} 个证件即将到期',
+
+    'body_batch': '''尊敬的{name}：
+
+您好！以下是您的证件到期提醒：
+
+{certificate_list}
+
+请及时办理证件续期手续。
+
+此邮件由证件管理系统自动发送，请勿回复。''',
+
+    # 证件行（HTML表格格式） / Certificate Row (HTML Table Format)
+    'certificate_row': '''
+    <tr>
+        <td style="padding: 12px; border-bottom: 1px solid #ddd;">{certificate_name}</td>
+        <td style="padding: 12px; border-bottom: 1px solid #ddd; text-align: center;">{expiry_date}</td>
+        <td style="padding: 12px; border-bottom: 1px solid #ddd; text-align: center;">
+            <span style="color: {status_color}; font-weight: bold;">{status_label}</span>
+            {status_note}
+        </td>
+    </tr>''',
+
+    # 证件列表表头（HTML表格） / Certificate List Header (HTML Table)
+    'certificate_list_header': '''
+    <table style="width: 100%%; border-collapse: collapse; margin: 20px 0;">
+        <thead>
+            <tr style="background-color: #f5f5f5;">
+                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">证件名称</th>
+                <th style="padding: 12px; text-align: center; border-bottom: 2px solid #ddd;">到期日期</th>
+                <th style="padding: 12px; text-align: center; border-bottom: 2px solid #ddd;">状态</th>
+            </tr>
+        </thead>
+        <tbody>
+{certificate_rows}
+        </tbody>
+    </table>'''
+}
+
+# 状态备注（用于批量邮件） / Status Notes (for Batch Emails)
+STATUS_NOTES = {
+    'expired': '（已过期 {days_overdue} 天）',
+    'urgent': '（剩余 {days_remaining} 天）',
+    'warning': '（剩余 {days_remaining} 天）'
+}

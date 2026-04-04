@@ -6,7 +6,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 from contextlib import contextmanager
 from datetime import datetime
-from models import Base, Certificate, UploadMetadata, SessionState, parse_date
+from models import (
+    Base, Certificate, UploadMetadata, SessionState,
+    NotificationSettings, NotificationRecord, NotificationPreference,
+    parse_date
+)
 import config
 
 
@@ -103,6 +107,27 @@ def session_scope():
         raise
     finally:
         close_session(session)
+
+
+def _update_model_fields(model, data_dict, exclude_fields=None):
+    """
+    Update model attributes from a dictionary.
+
+    Args:
+        model: SQLAlchemy model instance
+        data_dict: Dictionary of field names to values
+        exclude_fields: List of field names to exclude from updates
+
+    Returns:
+        True if any fields were updated, False otherwise
+    """
+    exclude = set(exclude_fields) if exclude_fields else {'id'}
+    updated = False
+    for key, value in data_dict.items():
+        if key not in exclude and hasattr(model, key):
+            setattr(model, key, value)
+            updated = True
+    return updated
 
 
 def get_db_session():
@@ -358,3 +383,157 @@ def _by_days(session, days):
         Certificate.days_remaining >= 0
     ).all()
     return [cert.to_dict() for cert in certs]
+
+
+# ============ Notification Settings Operations ============
+
+def get_notification_settings(session=None, include_password=False):
+    """获取通知设置 / Get notification settings"""
+    if session is None:
+        with session_scope() as sess:
+            settings = sess.query(NotificationSettings).first()
+            return settings.to_dict(include_password=include_password) if settings else None
+    settings = session.query(NotificationSettings).first()
+    return settings.to_dict(include_password=include_password) if settings else None
+
+
+def save_notification_settings(settings_data, session=None):
+    """保存通知设置 / Save notification settings"""
+    if session is None:
+        with session_scope() as sess:
+            return _save_settings(sess, settings_data)
+    return _save_settings(session, settings_data)
+
+
+def _save_settings(session, settings_data):
+    """Helper to save settings"""
+    settings = session.query(NotificationSettings).first()
+
+    if settings:
+        _update_model_fields(settings, settings_data, exclude_fields={'id'})
+    else:
+        # Create new
+        settings = NotificationSettings(**{k: v for k, v in settings_data.items() if k != 'id'})
+        session.add(settings)
+
+    return True
+
+
+# ============ Notification Record Operations ============
+
+def create_notification_record(record_data, session=None):
+    """创建通知记录 / Create notification record"""
+    if session is None:
+        with session_scope() as sess:
+            record = NotificationRecord(**record_data)
+            sess.add(record)
+            sess.flush()
+            return record.id
+    record = NotificationRecord(**record_data)
+    session.add(record)
+    session.flush()
+    return record.id
+
+
+def get_notification_records(limit=100, offset=0, session=None):
+    """获取通知记录列表 / Get notification records"""
+    if session is None:
+        with session_scope() as sess:
+            records = sess.query(NotificationRecord)\
+                .order_by(NotificationRecord.created_at.desc())\
+                .limit(limit)\
+                .offset(offset)\
+                .all()
+            return [r.to_dict() for r in records]
+
+    records = session.query(NotificationRecord)\
+        .order_by(NotificationRecord.created_at.desc())\
+        .limit(limit)\
+        .offset(offset)\
+        .all()
+    return [r.to_dict() for r in records]
+
+
+def get_notification_records_by_status(status, session=None):
+    """按状态获取通知记录 / Get notification records by status"""
+    if session is None:
+        with session_scope() as sess:
+            records = sess.query(NotificationRecord)\
+                .filter_by(send_status=status)\
+                .order_by(NotificationRecord.created_at.desc())\
+                .all()
+            return [r.to_dict() for r in records]
+
+    records = session.query(NotificationRecord)\
+        .filter_by(send_status=status)\
+        .order_by(NotificationRecord.created_at.desc())\
+        .all()
+    return [r.to_dict() for r in records]
+
+
+def update_notification_record(record_id, update_data, session=None):
+    """更新通知记录 / Update notification record"""
+    if session is None:
+        with session_scope() as sess:
+            record = sess.query(NotificationRecord).filter_by(id=record_id).first()
+            if record:
+                _update_model_fields(record, update_data)
+                return True
+            return False
+
+    record = session.query(NotificationRecord).filter_by(id=record_id).first()
+    if record:
+        _update_model_fields(record, update_data)
+        return True
+    return False
+
+
+# ============ Notification Preferences Operations ============
+
+def get_notification_preferences(session=None):
+    """获取所有通知偏好 / Get all notification preferences"""
+    if session is None:
+        with session_scope() as sess:
+            prefs = sess.query(NotificationPreference).all()
+            return [p.to_dict() for p in prefs]
+    prefs = session.query(NotificationPreference).all()
+    return [p.to_dict() for p in prefs]
+
+
+def get_notification_preference(email, session=None):
+    """获取单个用户的通知偏好 / Get notification preference by email"""
+    if session is None:
+        with session_scope() as sess:
+            pref = sess.query(NotificationPreference).filter_by(email=email).first()
+            return pref.to_dict() if pref else None
+    pref = session.query(NotificationPreference).filter_by(email=email).first()
+    return pref.to_dict() if pref else None
+
+
+def set_notification_preference(email, enabled=True, name=None, department=None, session=None):
+    """设置用户通知偏好 / Set user notification preference"""
+    if session is None:
+        with session_scope() as sess:
+            return _set_pref(sess, email, enabled, name, department)
+    return _set_pref(session, email, enabled, name, department)
+
+
+def _set_pref(session, email, enabled, name, department):
+    """Helper to set preference"""
+    pref = session.query(NotificationPreference).filter_by(email=email).first()
+    if pref:
+        pref.email_enabled = enabled
+        if name:
+            pref.name = name
+        if department:
+            pref.department = department
+        pref.updated_at = datetime.utcnow()
+    else:
+        pref = NotificationPreference(
+            email=email,
+            email_enabled=enabled,
+            name=name,
+            department=department
+        )
+        session.add(pref)
+    return True
